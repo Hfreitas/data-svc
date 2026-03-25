@@ -13,6 +13,50 @@ Depois: N8N ──→ data-svc (Flask) ──→ Supabase
 
 ---
 
+## Contribuição
+
+### Regras obrigatórias
+
+- **Push direto na `main` é proibido.** Todo código deve chegar via Pull Request.
+- **Todo PR precisa de ao menos 1 aprovação** do responsável técnico antes de ser mergeado.
+- PRs com conflito com a `main` não serão revisados — resolva o conflito primeiro.
+
+### Fluxo de trabalho
+
+```bash
+# 1. Atualize sua main local antes de começar
+git checkout main
+git pull origin main
+
+# 2. Crie uma branch descritiva a partir da main
+git checkout -b feat/usuarios-get-endpoint
+
+# 3. Desenvolva, commite com mensagens claras
+git add src/routes/usuarios.py src/queries/usuarios.py
+git commit -m "feat: implementa GET /usuarios com cache TTL 60s"
+
+# 4. Envie a branch e abra o PR
+git push origin feat/usuarios-get-endpoint
+gh pr create --title "feat: GET /usuarios" --body "Descrição do que foi feito"
+```
+
+### Nomenclatura de branches
+
+| Tipo | Padrão | Exemplo |
+|---|---|---|
+| Nova funcionalidade | `feat/<descricao>` | `feat/comprovantes-post` |
+| Correção de bug | `fix/<descricao>` | `fix/cache-invalidation-saldo` |
+| Testes | `test/<descricao>` | `test/usuarios-suite` |
+| Documentação | `docs/<descricao>` | `docs/setup-docker` |
+
+### O que incluir no PR
+
+- O que foi implementado e por quê
+- Como testar localmente (comando curl ou pytest)
+- Se adicionou dependência nova, justificar
+
+---
+
 ## Estrutura de pastas
 
 ```
