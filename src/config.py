@@ -9,6 +9,8 @@ class Config:
     PORT: int = int(os.getenv("PORT", 5000))
     FLASK_ENV: str = os.getenv("FLASK_ENV", "production")
 
+    API_KEY: str = os.environ["API_KEY"]
+
     # Cache TTLs (segundos)
     CACHE_TTL_USUARIO: int = int(os.getenv("CACHE_TTL_USUARIO", 60))
     CACHE_TTL_SALDO: int = int(os.getenv("CACHE_TTL_SALDO", 300))

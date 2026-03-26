@@ -322,3 +322,44 @@ docker run --rm \
 ```
 
 > Em produção o deploy é feito pelo responsável técnico via Easypanel no VPS Hostinger.
+
+---
+
+## Segurança — Acesso restrito ao N8N
+
+O `data-svc` **não deve ser acessível pela internet**. A proteção é feita em duas camadas:
+
+### Camada 1 — Isolamento de rede (Easypanel)
+
+No Easypanel, o serviço **não deve ter Domain configurado nem porta exposta para o host**. Isso garante que o container só é alcançável dentro da rede Docker interna da VPS.
+
+O N8N acessa o serviço pelo nome interno:
+
+```text
+http://data-svc:5000/usuarios
+```
+
+### Camada 2 — API Key (defesa em profundidade)
+
+Todas as requisições exigem o header `X-API-Key`. Se a porta for acidentalmente exposta, o serviço ainda estará protegido.
+
+**Configuração no Easypanel — variáveis de ambiente do `data-svc`:**
+
+```env
+API_KEY=<chave-gerada-com-openssl-rand-hex-32>
+```
+
+**Configuração no N8N:**
+
+Crie uma credential do tipo **Header Auth**:
+
+- Name: `X-API-Key`
+- Value: `<mesma-chave>`
+
+Selecione essa credential em todos os nodes **HTTP Request** que chamam o `data-svc` em "Authentication → Generic Credential Type → Header Auth".
+
+**Gerar uma chave forte:**
+
+```bash
+openssl rand -hex 32
+```
