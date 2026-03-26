@@ -15,6 +15,8 @@ def create_app() -> Flask:
 
     @app.before_request
     def check_api_key():
+        if Config.API_KEY is None:
+            return  # auth desativada — API_KEY não definida (dev local)
         key = request.headers.get("X-API-Key")
         if not key or key != Config.API_KEY:
             return jsonify({"error": "unauthorized"}), 401
