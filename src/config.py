@@ -17,3 +17,13 @@ class Config:
     CACHE_TTL_COMPROVANTES: int = int(os.getenv("CACHE_TTL_COMPROVANTES", 300))
     CACHE_TTL_AGENDAMENTOS: int = int(os.getenv("CACHE_TTL_AGENDAMENTOS", 120))
     CACHE_TTL_LISTAS: int = int(os.getenv("CACHE_TTL_LISTAS", 300))
+
+    @classmethod
+    def validate(cls) -> None:
+        if cls.FLASK_ENV == "production" and cls.API_KEY is None:
+            raise EnvironmentError(
+                "API_KEY é obrigatória. "
+            )
+
+
+Config.validate()
