@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, abort
 
 from src.db import get_db_conn
 from src.cache import cache_get, cache_set, cache_invalidate
@@ -17,7 +17,22 @@ def get_usuario():
     # 3. chamar q.find_by_telefone(conn, telefone)
     # 4. armazenar no cache com TTL CACHE_TTL_USUARIO
     # 5. retornar 200 ou 404
-    pass
+    telefone = validate_telefone(request.args.get('telefone')) 
+      
+    cached = cache_get("usuario", telefone)
+    
+    if cached:
+        return jsonify(cached)
+    
+    with get_db_conn() as conn:
+        usuario = q.find_by_telefone(conn, telefone)
+        
+        if not usuario:
+            return jsonify({"error": "usuario_nao_encontrado"}), 404
+        
+        cache_set("usuario", telefone, usuario)
+        return usuario
+
 
 
 @usuarios_bp.route("/usuarios", methods=["POST"])
