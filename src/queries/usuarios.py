@@ -72,4 +72,45 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
     # TODO: implementar
     # Executar UPDATE com COALESCE para campos permitidos
     # Retornar dict com dados atualizados ou None se não encontrado
-    pass
+    sql = """
+        UPDATE public.usuarios
+        SET
+            nome                = COALESCE(%(nome)s, nome),
+            razao_social        = COALESCE(%(razao_social)s, razao_social),
+            estado_atual        = COALESCE(%(estado_atual)s, estado_atual),
+            interacao_previa    = COALESCE(%(interacao_previa)s, interacao_previa),
+            tipo_negocio        = COALESCE(%(tipo_negocio)s, tipo_negocio),
+            descricao_negocio   = COALESCE(%(descricao_negocio)s, descricao_negocio),
+            descricao_objetivo  = COALESCE(%(descricao_objetivo)s, descricao_objetivo),
+            area_ajuda          = COALESCE(%(area_ajuda)s, area_ajuda),
+            preco_referencia    = COALESCE(%(preco_referencia)s, preco_referencia),
+            dias_trabalho       = COALESCE(%(dias_trabalho)s, dias_trabalho),
+            horario_inicio      = COALESCE(%(horario_inicio)s, horario_inicio),
+            horario_fim         = COALESCE(%(horario_fim)s, horario_fim),
+            data_ultimo_contato = NOW()
+        WHERE id = %(id)s
+        RETURNING *;
+    """
+    
+    params = {
+        "id": usuario_id,
+        "nome": None,
+        "razao_social": None,
+        "estado_atual": None,
+        "interacao_previa": None,
+        "tipo_negocio": None,
+        "descricao_negocio": None,
+        "descricao_objetivo": None,
+        "area_ajuda": None,
+        "preco_referencia": None,
+        "dias_trabalho": None,
+        "horario_inicio": None,
+        "horario_fim": None,
+    }
+    params.update(fields)
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, params)
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    
