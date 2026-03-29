@@ -33,7 +33,39 @@ def upsert(conn, numero_telefone: str, nome: str, razao_social: str) -> dict:
     # TODO: implementar
     # Executar CTE: existing_user + inserted_user (evita race condition)
     # Retornar dict com dados do usuário (existente ou recém-criado)
-    pass
+    sql = """
+        WITH existing_user AS (
+        SELECT * FROM public.usuarios
+        WHERE numero_telefone = %(numero_telefone)s
+        ),
+        inserted_user AS (
+        INSERT INTO public.usuarios (
+            numero_telefone, nome, razao_social,
+            interacao_previa, data_primeiro_contato, data_ultimo_contato, estado_atual)
+        SELECT
+            %(numero_telefone)s, %(nome)s, %(razao_social)s,
+            false, NOW(), CURRENT_DATE, 'menu'
+        WHERE NOT EXISTS (SELECT 1 FROM existing_user)
+        RETURNING *
+        )
+        SELECT * FROM existing_user
+        UNION ALL SELECT * FROM inserted_user;
+    """
+    
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(
+            sql, 
+            {
+                "numero_telefone": numero_telefone, 
+                "nome": nome, 
+                "razao_social": razao_social},
+        )
+
+        row = cursor.fetchone()
+        
+        return dict(row)
+        
+    
 
 
 def update(conn, usuario_id: int, fields: dict) -> dict | None:

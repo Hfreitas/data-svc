@@ -32,12 +32,19 @@ def get_usuario():
 
 @usuarios_bp.route("/usuarios", methods=["POST"])
 def create_usuario():
-    # TODO: implementar
-    # 1. validar body (numero_telefone, nome, razao_social)
-    # 2. chamar q.upsert(conn, body)
-    # 3. invalidar cache 'usuario:{telefone}'
-    # 4. retornar 200 com dados do usuário
-    pass
+    body = request.get_json()
+    
+    require_fields(body, "numero_telefone", "nome", "razao_social")
+    
+    numero_telefone = body["numero_telefone"]
+    validate_telefone(numero_telefone)
+    
+    with get_db_conn() as conn:
+        usuario = q.upsert(conn, numero_telefone, body["nome"], body["razao_social"])
+        
+        cache_invalidate("usuario", numero_telefone)
+        
+        return ok(200, usuario)
 
 
 @usuarios_bp.route("/usuarios/<int:usuario_id>", methods=["PUT"])
