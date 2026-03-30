@@ -11,13 +11,22 @@ usuarios_bp = Blueprint("usuarios", __name__)
 
 @usuarios_bp.route("/usuarios", methods=["GET"])
 def get_usuario():
-    # TODO: implementar
-    # 1. validar query param ?telefone=
-    # 2. checar cache 'usuario:{telefone}'
-    # 3. chamar q.find_by_telefone(conn, telefone)
-    # 4. armazenar no cache com TTL CACHE_TTL_USUARIO
-    # 5. retornar 200 ou 404
-    pass
+    telefone = validate_telefone(request.args.get('telefone')) 
+      
+    cached = cache_get("usuario", telefone)
+    
+    if cached:
+        return jsonify(cached)
+    
+    with get_db_conn() as conn:
+        usuario = q.find_by_telefone(conn, telefone)
+        
+        if not usuario:
+            return jsonify({"error": "usuario_nao_encontrado"}), 404
+        
+        cache_set("usuario", telefone, usuario, Config.CACHE_TTL_USUARIO)
+        return jsonify(usuario)
+
 
 
 @usuarios_bp.route("/usuarios", methods=["POST"])
