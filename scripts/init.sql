@@ -76,7 +76,7 @@ CREATE TABLE public.agendamentos (
   data_compromisso  date,
   hora_compromisso  time,
   status            text          DEFAULT 'pendente'
-                    CHECK (status IN ('pendente', 'confirmado', 'cancelado')),
+                    CHECK (status IN ('pendente', 'confirmado', 'agendado')),
   lembrete_enviado  boolean       DEFAULT false,  -- atualizado pelo workflow Lembretes automaticos
   data_lembrete     timestamp,
   tipo_agendamento  varchar(20)   DEFAULT 'unico',
@@ -135,14 +135,16 @@ CREATE TABLE public.contas_recorrentes (
   ativo          boolean        NOT NULL DEFAULT true,  -- soft delete
   created_at     timestamp      NOT NULL DEFAULT now(),
   updated_at     timestamp      NOT NULL DEFAULT now(),
-  CONSTRAINT contas_recorrentes_pkey PRIMARY KEY (id),
-  -- Unicidade por tipo (exceto boleto, que pode ter múltiplos)
-  CONSTRAINT contas_recorrentes_usuario_tipo_unique
-    UNIQUE (usuario_id, tipo) DEFERRABLE INITIALLY DEFERRED
-    -- A constraint real usa: WHERE tipo <> 'boleto' — ver migration 001
+  CONSTRAINT contas_recorrentes_pkey PRIMARY KEY (id)
 );
 
 CREATE INDEX idx_contas_recorrentes_usuario ON public.contas_recorrentes (usuario_id);
 CREATE INDEX idx_contas_recorrentes_lembrete
   ON public.contas_recorrentes (usuario_id, dia_vencimento)
   WHERE lembrete_ativo = true AND ativo = true;
+
+-- Índice parcial para UPSERT em POST /contas-recorrentes
+-- Garante unicidade de (usuario_id, tipo) apenas para tipos que não são 'boleto'
+CREATE UNIQUE INDEX contas_recorrentes_usuario_tipo_unique
+  ON public.contas_recorrentes (usuario_id, tipo)
+  WHERE tipo <> 'boleto';
