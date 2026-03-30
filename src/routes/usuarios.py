@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, abort
+from flask import Blueprint, request, jsonify
 
 from src.db import get_db_conn
 from src.cache import cache_get, cache_set, cache_invalidate
@@ -24,8 +24,8 @@ def get_usuario():
         if not usuario:
             return jsonify({"error": "usuario_nao_encontrado"}), 404
         
-        cache_set("usuario", telefone, usuario)
-        return usuario
+        cache_set("usuario", telefone, usuario, Config.CACHE_TTL_USUARIO)
+        return jsonify(usuario)
 
 
 
