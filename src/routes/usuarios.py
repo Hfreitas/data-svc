@@ -5,6 +5,7 @@ from src.cache import cache_get, cache_set, cache_invalidate
 from src.config import Config
 from src.utils.validators import validate_telefone, require_fields
 import src.queries.usuarios as q
+from src.utils.api_response import fail, ok
 
 usuarios_bp = Blueprint("usuarios", __name__)
 
@@ -22,10 +23,10 @@ def get_usuario():
         usuario = q.find_by_telefone(conn, telefone)
         
         if not usuario:
-            return jsonify({"error": "usuario_nao_encontrado"}), 404
+            return fail("usuario_nao_encontrado", status_code=404)
         
         cache_set("usuario", telefone, usuario, Config.CACHE_TTL_USUARIO)
-        return jsonify(usuario)
+        return ok(200, usuario)
 
 
 
