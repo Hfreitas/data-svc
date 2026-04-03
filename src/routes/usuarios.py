@@ -32,12 +32,19 @@ def get_usuario():
 
 @usuarios_bp.route("/usuarios", methods=["POST"])
 def create_usuario():
-    # TODO: implementar
-    # 1. validar body (numero_telefone, nome, razao_social)
-    # 2. chamar q.upsert(conn, body)
-    # 3. invalidar cache 'usuario:{telefone}'
-    # 4. retornar 200 com dados do usuário
-    pass
+    body = request.get_json()
+    
+    require_fields(body, "numero_telefone", "nome", "razao_social")
+    
+    numero_telefone = body["numero_telefone"]
+    validate_telefone(numero_telefone)
+    
+    with get_db_conn() as conn:
+        usuario = q.upsert(conn, numero_telefone, body["nome"], body["razao_social"])
+        
+        cache_invalidate("usuario", numero_telefone)
+        
+        return ok(200, usuario)
 
 
 @usuarios_bp.route("/usuarios/<int:usuario_id>", methods=["PUT"])
@@ -47,4 +54,38 @@ def update_usuario(usuario_id: int):
     # 2. chamar q.update(conn, usuario_id, body)
     # 3. invalidar cache 'usuario:{telefone}' e 'usuario:id:{id}'
     # 4. retornar 200 com dados atualizados ou 404
-    pass
+    
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return fail("body_invalido", "JSON inválido ou ausente", 400)
+
+    allowed_fields = {
+        "nome", "razao_social", "estado_atual", "interacao_previa",
+        "tipo_negocio", "descricao_negocio", "descricao_objetivo",
+        "area_ajuda", "preco_referencia", "dias_trabalho",
+        "horario_inicio", "horario_fim", "data_ultimo_contato"            
+    }
+    
+    fields_to_update = {
+        k: v for k, v in body.items()
+        if k in allowed_fields and v is not None
+    }
+    
+    if not fields_to_update:
+        return fail(
+            "campos_invalidos",
+            "informe ao menos um campo permitido",
+            400,
+        )
+    
+    with get_db_conn() as conn:
+               
+        usuario = q.update(conn, usuario_id, fields_to_update)
+        if not usuario:
+            return fail("usuario_nao_encontrado", status_code=404)
+
+        cache_invalidate("usuario", usuario["numero_telefone"])
+        cache_invalidate("usuario", f"id:{usuario_id}")
+
+        return ok(200, usuario)
+

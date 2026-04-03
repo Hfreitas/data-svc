@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from src.config import Config
 from src.db import init_db
 from src.utils.errors import register_error_handlers
+from src.utils.json_provider import AppJSONProvider
 from src.routes.usuarios import usuarios_bp
 from src.routes.comprovantes import comprovantes_bp
 from src.routes.agendamentos import agendamentos_bp
@@ -12,6 +13,7 @@ from src.routes.contas import contas_bp
 
 def create_app() -> Flask:
     app = Flask(__name__)
+    app.json = AppJSONProvider(app)
 
     @app.before_request
     def check_api_key():
