@@ -5,19 +5,26 @@ from src.cache import cache_get, cache_set, cache_invalidate
 from src.config import Config
 from src.utils.validators import validate_mes, require_fields
 import src.queries.comprovantes as q
+from src.utils.api_response import ok
 
 comprovantes_bp = Blueprint("comprovantes", __name__)
 
 
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/saldo", methods=["GET"])
 def get_saldo(usuario_id: int):
-    # TODO: implementar
-    # 1. validar query param ?mes=YYYY-MM
-    # 2. checar cache 'saldo:{usuario_id}:{YYYY-MM}'
-    # 3. chamar q.get_saldo(conn, usuario_id, mes)
-    # 4. armazenar no cache com TTL CACHE_TTL_SALDO
-    # 5. retornar { mes, total_vendas, total_gastos, saldo }
-    pass
+    mes = validate_mes(request.args.get("mes"))
+    
+    saldo_mes = cache_get("saldo", usuario_id)
+    if saldo_mes:
+        return ok(200, saldo_mes)
+    
+    with get_db_conn() as conn:
+        saldo_mes = q.get_saldo(conn, usuario_id, mes)     
+
+        cache_set("saldo", usuario_id, saldo_mes, Config.CACHE_TTL_SALDO)
+        
+        return ok(200, saldo_mes)
+    
 
 
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes", methods=["GET"])
