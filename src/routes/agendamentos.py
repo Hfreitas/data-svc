@@ -1,12 +1,11 @@
-from datetime import date, datetime
-from zoneinfo import ZoneInfo
+from datetime import date
 
 from flask import Blueprint, request
 
 from src.db import get_db_conn
 from src.cache import cache_get, cache_invalidate_prefix, cache_set
 from src.config import Config
-from src.utils.validators import require_fields, validate_agendamento_payload, validate_semana_agendamento
+from src.utils.validators import validade_status_agendamento, validate_agendamento_payload, validate_semana_agendamento
 import src.queries.agendamentos as q
 from src.utils.api_response import fail, ok
 
@@ -51,9 +50,18 @@ def create_agendamento(usuario_id: int):
     "/usuarios/<int:usuario_id>/agendamentos/<int:agendamento_id>", methods=["PUT"]
 )
 def update_agendamento(usuario_id: int, agendamento_id: int):
-    # TODO: implementar
-    # 1. validar body (status obrigatório)
-    # 2. chamar q.update_status(conn, agendamento_id, usuario_id, status)
-    # 3. invalidar cache 'agendamentos:{usuario_id}:*'
-    # 4. retornar 200 com dados atualizados ou 404
-    pass
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return fail("body_invalido", "JSON inválido ou ausente", 400)
+    
+    status = validade_status_agendamento(body.get("status"))
+    
+    with get_db_conn() as conn:
+        agendamento = q.update_status(conn, agendamento_id, usuario_id, status)
+        
+        if agendamento is None:
+            return fail("agendamento_nao_encontrado", f"o agendamento com id {agendamento_id} para o usuário informado não foi encontrado", status_code=404)
+        
+        cache_invalidate_prefix("agendamentos", f"{usuario_id}:")
+        
+        return ok(200, agendamento)

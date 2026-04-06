@@ -57,7 +57,15 @@ def create(conn, usuario_id: int, data: dict) -> dict:
 
 
 def update_status(conn, agendamento_id: int, usuario_id: int, status: str) -> dict | None:
-    # TODO: implementar
-    # Executar UPDATE status WHERE id AND usuario_id RETURNING
-    # Retornar dict ou None se não encontrado
-    pass
+    sql = """
+        UPDATE public.agendamentos
+        SET status = %(status)s, data_modificacao = NOW()
+        WHERE id = %(agendamento_id)s
+            AND usuario_id = %(usuario_id)s
+        RETURNING id, nome_compromisso, status;
+    """
+    
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"agendamento_id": agendamento_id, "usuario_id": usuario_id, "status":status})
+        row = cursor.fetchone()
+        return dict(row) if row else None

@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 import re
+import stat
 from typing import Final
 from zoneinfo import ZoneInfo
 from flask import abort
@@ -23,6 +24,12 @@ _OPERACAO_ALIASES: Final[dict[str, str]] = {
 
 _SEMANA_ALIASES: Final[dict[str, str]] = {
     "atual": "atual"
+}
+
+_STATUS_AGENDAMENTO: Final[set[str]] = {
+    "pendente",
+    "confirmado",
+    "agendado"
 }
 
 
@@ -144,3 +151,17 @@ def validate_agendamento_payload(body: dict) -> dict:
         return abort(400, "não é permitido agendar um horário no passado")
     
     return body
+
+
+def validade_status_agendamento(status: str) -> str:
+    """Valida se o status informado para o agendamento é correto"""
+    if not status:
+        return abort(400, description="o campo 'status' não pode ser vazio")
+    
+    status = status.lower()
+    
+    if status not in _STATUS_AGENDAMENTO:
+        permitidos = ", ".join(sorted(_STATUS_AGENDAMENTO))
+        abort(400, description=f"o campo 'status' está inválido. Use: {permitidos}")
+        
+    return status       
