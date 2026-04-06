@@ -1,11 +1,11 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request
 
 from src.db import get_db_conn
-from src.cache import cache_get, cache_set, cache_invalidate
+from src.cache import cache_get, cache_invalidate_prefix, cache_set
 from src.config import Config
-from src.utils.validators import validate_mes, validate_modo,require_fields
+from src.utils.validators import validate_comprovante_payload, validate_mes, validate_modo
 import src.queries.comprovantes as q
-from src.utils.api_response import ok
+from src.utils.api_response import fail, ok
 
 comprovantes_bp = Blueprint("comprovantes", __name__)
 
@@ -30,8 +30,7 @@ def get_saldo(usuario_id: int):
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes", methods=["GET"])
 def list_comprovantes(usuario_id: int):
     mes = validate_mes(request.args.get("mes"))
-    modo = validate_modo(request.args.get("modo"))
-    
+    modo = validate_modo(request.args.get("modo"))  
     
     comprovantes = cache_get("comprovantes", f"{usuario_id}:{mes}:{modo}")
     if comprovantes:
@@ -47,9 +46,19 @@ def list_comprovantes(usuario_id: int):
 
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes", methods=["POST"])
 def create_comprovante(usuario_id: int):
-    # TODO: implementar
-    # 1. validar body (item, quantidade, valor_unitario, valor_total, operacao, item_hash)
-    # 2. chamar q.upsert(conn, usuario_id, body)
-    # 3. invalidar cache 'saldo:{usuario_id}:*' e 'comprovantes:{usuario_id}:*'
-    # 4. retornar 200 com dados do comprovante inserido/atualizado
-    pass
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return fail("body_invalido", "JSON inválido ou ausente", 400)
+    
+    body = validate_comprovante_payload(body)
+    
+    with get_db_conn() as conn:
+        comprovante = q.upsert(conn, usuario_id, body)
+        
+        cache_invalidate_prefix("saldo", f"{usuario_id}:")
+        cache_invalidate_prefix("comprovantes", f"{usuario_id}:")
+        
+        return ok(200, comprovante)
+        
+
+    
