@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify
 from src.db import get_db_conn
 from src.cache import cache_get, cache_set, cache_invalidate
 from src.config import Config
-from src.utils.validators import validate_mes, require_fields
+from src.utils.validators import validate_mes, validate_modo,require_fields
 import src.queries.comprovantes as q
 from src.utils.api_response import ok
 
@@ -29,13 +29,20 @@ def get_saldo(usuario_id: int):
 
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes", methods=["GET"])
 def list_comprovantes(usuario_id: int):
-    # TODO: implementar
-    # 1. validar ?mes=YYYY-MM e ?modo=relatorio|gastos|vendas
-    # 2. checar cache 'comprovantes:{usuario_id}:{YYYY-MM}:{modo}'
-    # 3. chamar q.list_comprovantes(conn, usuario_id, mes, modo)
-    # 4. armazenar no cache com TTL CACHE_TTL_COMPROVANTES
-    # 5. retornar lista de comprovantes
-    pass
+    mes = validate_mes(request.args.get("mes"))
+    modo = validate_modo(request.args.get("modo"))
+    
+    
+    comprovantes = cache_get("comprovantes", f"{usuario_id}:{mes}:{modo}")
+    if comprovantes:
+        return ok(200, comprovantes)
+    
+    with get_db_conn() as conn:
+        comprovantes = q.list_comprovantes(conn, usuario_id, mes, modo)
+        
+        cache_set("comprovantes", f"{usuario_id}:{mes}:{modo}", comprovantes, Config.CACHE_TTL_COMPROVANTES)
+        
+        return ok(200, comprovantes)
 
 
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes", methods=["POST"])
