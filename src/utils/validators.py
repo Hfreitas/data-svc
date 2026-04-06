@@ -19,6 +19,10 @@ _OPERACAO_ALIASES: Final[dict[str, str]] = {
     "venda": "venda",
 }
 
+_SEMANA_ALIASES: Final[dict[str, str]] = {
+    "atual": "atual"
+}
+
 
 def require_fields(body: dict, *fields: str):
     """Aborta com 400 se algum campo obrigatório estiver ausente."""
@@ -54,6 +58,7 @@ def validate_modo(modo: str) -> str:
 
 
 def validate_comprovante_payload(body: dict) -> dict:
+    """Valida o corpo da requisição do upsert de um comprovante"""
     operacao_raw = str(body.get("operacao", "")).strip().lower()
     operacao = _OPERACAO_ALIASES.get(operacao_raw)
     if operacao not in _OPERACAO_ALIASES:
@@ -94,3 +99,15 @@ def validate_comprovante_payload(body: dict) -> dict:
     body["item"] = item
     body["item_hash"] = item_hash
     return body
+
+
+def validate_semana_agendamento(semana: str) -> str:
+    """Valida se a semana informada em agendamentos é correta"""
+    raw = (semana or "").strip().lower()
+    normalizado = _SEMANA_ALIASES.get(raw)
+
+    if normalizado is None:
+        permitidos = ", ".join(sorted(_SEMANA_ALIASES.keys()))
+        abort(400, description=f"parâmetro 'semana' inválido. Use: {permitidos}")
+
+    return normalizado

@@ -1,24 +1,33 @@
-from flask import Blueprint, request, jsonify
+from datetime import date
+
+from flask import Blueprint, request
 
 from src.db import get_db_conn
 from src.cache import cache_get, cache_set, cache_invalidate
 from src.config import Config
-from src.utils.validators import require_fields
+from src.utils.validators import require_fields, validate_semana_agendamento
 import src.queries.agendamentos as q
+from src.utils.api_response import ok
 
 agendamentos_bp = Blueprint("agendamentos", __name__)
 
 
 @agendamentos_bp.route("/usuarios/<int:usuario_id>/agendamentos", methods=["GET"])
 def list_agendamentos(usuario_id: int):
-    # TODO: implementar
-    # 1. extrair ?semana=atual (por ora apenas "atual" suportado)
-    # 2. calcular semana ISO atual
-    # 3. checar cache 'agendamentos:{usuario_id}:{semana_iso}'
-    # 4. chamar q.list_semana(conn, usuario_id)
-    # 5. armazenar no cache com TTL CACHE_TTL_AGENDAMENTOS
-    # 6. retornar lista de agendamentos
-    pass
+    semana = validate_semana_agendamento(request.args.get("semana"))
+    iso = date.today().isocalendar()
+    semana_iso = f"{iso.year}-W{iso.week:02d}"
+    
+    agendamentos = cache_get("agendamentos", f"{usuario_id}:{semana_iso}")
+    if agendamentos:
+        return ok(200, agendamentos) 
+    
+    with get_db_conn() as conn:
+        agendamentos = q.list_semana(conn, usuario_id)
+        
+        cache_set("agendamentos", f"{usuario_id}:{semana_iso}", agendamentos, Config.CACHE_TTL_AGENDAMENTOS)
+        
+        return ok(200, agendamentos)
 
 
 @agendamentos_bp.route("/usuarios/<int:usuario_id>/agendamentos", methods=["POST"])
