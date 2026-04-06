@@ -16,8 +16,8 @@ def list_semana(conn, usuario_id: int) -> list[dict]:
         FROM public.agendamentos
         WHERE usuario_id = %(usuario_id)s
             AND status IN ('pendente', 'confirmado', 'agendado')
-            AND data_compromisso >= date_trunc('week', CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo')::date
-            AND data_compromisso <  date_trunc('week', CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo')::date + 7
+            AND data_compromisso >= date_trunc('week', NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+            AND data_compromisso <  date_trunc('week', NOW() AT TIME ZONE 'America/Sao_Paulo')::date + INTERVAL '7 day'
         ORDER BY data_compromisso, hora_compromisso;
     """
     
