@@ -14,14 +14,14 @@ comprovantes_bp = Blueprint("comprovantes", __name__)
 def get_saldo(usuario_id: int):
     mes = validate_mes(request.args.get("mes"))
     
-    saldo_mes = cache_get("saldo", usuario_id)
+    saldo_mes = cache_get("saldo", f"{usuario_id}:{mes}")
     if saldo_mes:
         return ok(200, saldo_mes)
     
     with get_db_conn() as conn:
         saldo_mes = q.get_saldo(conn, usuario_id, mes)     
 
-        cache_set("saldo", usuario_id, saldo_mes, Config.CACHE_TTL_SALDO)
+        cache_set("saldo", f"{usuario_id}:{mes}", saldo_mes, Config.CACHE_TTL_SALDO)
         
         return ok(200, saldo_mes)
     
