@@ -30,3 +30,10 @@ def cache_invalidate(namespace: str, key: str = None):
         c.pop(key, None)
     else:
         c.clear()
+
+def cache_invalidate_prefix(namespace: str, prefix: str):
+    """Invalida chaves que começam com o prefixo informado """
+    c = get_cache(namespace)
+    for k in list(c.keys()):
+        if str(k).startswith(prefix):
+            c.pop(k, None)
