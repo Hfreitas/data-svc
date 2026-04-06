@@ -6,9 +6,6 @@ Queries de agendamentos — funções puras que recebem conn + parâmetros e ret
 
 
 def list_semana(conn, usuario_id: int) -> list[dict]:
-    # TODO: implementar
-    # Executar SELECT para a semana atual (segunda a sábado) no fuso America/Sao_Paulo
-    # Retornar lista de dicts ordenada por data_compromisso, hora_compromisso
     sql = """
         SELECT
             id,
@@ -32,11 +29,31 @@ def list_semana(conn, usuario_id: int) -> list[dict]:
 
 
 def create(conn, usuario_id: int, data: dict) -> dict:
-    # TODO: implementar
-    # Executar INSERT RETURNING
-    # Converter data_compromisso via TO_DATE(%(data_compromisso)s, 'DD/MM/YYYY')
-    # Retornar dict com dados do agendamento criado
-    pass
+    params ={
+        "usuario_id": usuario_id,
+        "nome_compromisso": data.get("nome_compromisso"),    
+        "data_compromisso": data.get("data_compromisso"),
+        "hora_compromisso": data.get("hora_compromisso")
+    }
+    
+    sql = """
+        INSERT INTO public.agendamentos (
+            usuario_id, nome_compromisso, data_compromisso,
+            hora_compromisso, status, data_criacao, data_modificacao)
+        VALUES (
+            %(usuario_id)s,
+            %(nome_compromisso)s,
+            %(data_compromisso)s::date,
+            %(hora_compromisso)s::time,
+            'confirmado',
+            NOW(), NOW())
+        RETURNING id, nome_compromisso, data_compromisso, hora_compromisso, status;
+    """
+    
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, params)
+        row = cursor.fetchone()
+        return dict(row)
 
 
 def update_status(conn, agendamento_id: int, usuario_id: int, status: str) -> dict | None:

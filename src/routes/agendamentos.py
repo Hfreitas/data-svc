@@ -1,13 +1,14 @@
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from flask import Blueprint, request
 
 from src.db import get_db_conn
-from src.cache import cache_get, cache_set, cache_invalidate
+from src.cache import cache_get, cache_invalidate_prefix, cache_set
 from src.config import Config
-from src.utils.validators import require_fields, validate_semana_agendamento
+from src.utils.validators import require_fields, validate_agendamento_payload, validate_semana_agendamento
 import src.queries.agendamentos as q
-from src.utils.api_response import ok
+from src.utils.api_response import fail, ok
 
 agendamentos_bp = Blueprint("agendamentos", __name__)
 
@@ -32,12 +33,18 @@ def list_agendamentos(usuario_id: int):
 
 @agendamentos_bp.route("/usuarios/<int:usuario_id>/agendamentos", methods=["POST"])
 def create_agendamento(usuario_id: int):
-    # TODO: implementar
-    # 1. validar body (nome_compromisso, data_compromisso, hora_compromisso)
-    # 2. chamar q.create(conn, usuario_id, body)
-    # 3. invalidar cache 'agendamentos:{usuario_id}:*'
-    # 4. retornar 201 com dados do agendamento criado
-    pass
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return fail("body_invalido", "JSON inválido ou ausente", 400)
+    
+    body = validate_agendamento_payload(body)
+    
+    with get_db_conn() as conn:
+        agendamento = q.create(conn, usuario_id, body)
+        
+        cache_invalidate_prefix("agendamentos", f"{usuario_id}:")
+        
+        return agendamento
 
 
 @agendamentos_bp.route(

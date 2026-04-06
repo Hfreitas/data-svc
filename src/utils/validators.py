@@ -1,6 +1,8 @@
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 import re
 from typing import Final
+from zoneinfo import ZoneInfo
 from flask import abort
 
 
@@ -111,3 +113,34 @@ def validate_semana_agendamento(semana: str) -> str:
         abort(400, description=f"parâmetro 'semana' inválido. Use: {permitidos}")
 
     return normalizado
+
+
+def validate_agendamento_payload(body: dict) -> dict:
+    """Valida o corpo da requisição de create de um agendamento"""
+    require_fields(body, "nome_compromisso", "data_compromisso", "hora_compromisso")
+    
+    if not body.get("nome_compromisso").strip():
+        return abort(400, description="o campo 'nome_compromisso' não deve ser vazio")
+    
+    tz = ZoneInfo("America/Sao_Paulo")
+
+    try:
+        data_compromisso = date.fromisoformat(body.get("data_compromisso"))
+    except (TypeError, ValueError):
+        return abort(400, description="o campo 'data_compromisso' deve estar no formato YYYY-MM-DD")
+    
+    try:
+        hora_compromisso = datetime.strptime(body.get("hora_compromisso"), "%H:%M").time()
+    except ValueError:
+        return abort(400, "o campo 'hora_compromisso' deve estar no formato HH:MM")
+
+    agora = datetime.now(tz)
+    hoje = agora.date()
+
+    if data_compromisso < hoje:
+        return abort(400, "não é permitido agendar uma data no passado")
+
+    if data_compromisso == hoje and hora_compromisso <= agora.time():
+        return abort(400, "não é permitido agendar um horário no passado")
+    
+    return body
