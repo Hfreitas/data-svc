@@ -56,7 +56,7 @@ def validate_modo(modo: str) -> str:
 def validate_comprovante_payload(body: dict) -> dict:
     operacao_raw = str(body.get("operacao", "")).strip().lower()
     operacao = _OPERACAO_ALIASES.get(operacao_raw)
-    if operacao not in _OPERACAO_ALIASES:
+    if operacao is None:
         permitidos = ", ".join(sorted(_OPERACAO_ALIASES.keys()))
         abort(400, description=f"o campo 'operacao' está inválido. Use: {permitidos}")
         
@@ -81,9 +81,13 @@ def validate_comprovante_payload(body: dict) -> dict:
     data_venda = None   
     data_compra = None    
     if operacao == "venda":
-        data_venda = body.get("data_venda")
+        data_venda = str(body.get("data_venda", "")).strip()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", data_venda):
+            abort(400, description="o campo 'data_venda' deve estar no formato YYYY-MM-DD")
     else:
-        data_compra = body.get("data_compra")
+        data_compra = str(body.get("data_compra", "")).strip()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", data_compra):
+            abort(400, description="o campo 'data_compra' deve estar no formato YYYY-MM-DD")
 
     if operacao == "venda" and not data_venda:
         abort(400, description="o campo 'data_venda' é obrigatório para operacao='venda'")
