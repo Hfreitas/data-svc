@@ -43,7 +43,7 @@ def create_agendamento(usuario_id: int):
         
         cache_invalidate_prefix("agendamentos", f"{usuario_id}:")
         
-        return ok(200 ,agendamento)
+        return ok(201 ,agendamento)
 
 
 @agendamentos_bp.route(
