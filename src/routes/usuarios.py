@@ -49,12 +49,6 @@ def create_usuario():
 
 @usuarios_bp.route("/usuarios/<int:usuario_id>", methods=["PUT"])
 def update_usuario(usuario_id: int):
-    # TODO: implementar
-    # 1. validar body (pelo menos um campo permitido presente)
-    # 2. chamar q.update(conn, usuario_id, body)
-    # 3. invalidar cache 'usuario:{telefone}' e 'usuario:id:{id}'
-    # 4. retornar 200 com dados atualizados ou 404
-    
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         return fail("body_invalido", "JSON inválido ou ausente", 400)

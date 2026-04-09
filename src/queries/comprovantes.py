@@ -1,8 +1,7 @@
-from psycopg2.extras import RealDictCursor
-
 """
 Queries de comprovantes — funções puras que recebem conn + parâmetros e retornam rows.
 """
+from psycopg2.extras import RealDictCursor
 
 
 def get_saldo(conn, usuario_id: int, mes: str) -> dict:
