@@ -1,9 +1,8 @@
-from psycopg2.extras import RealDictCursor
-
 """
 Queries de usuários — funções puras que recebem conn + parâmetros e retornam rows.
 Nenhuma lógica HTTP ou de cache aqui.
 """
+from psycopg2.extras import RealDictCursor
 
 
 def find_by_telefone(conn, telefone: str) -> dict | None:

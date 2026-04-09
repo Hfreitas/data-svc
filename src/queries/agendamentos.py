@@ -1,8 +1,7 @@
-from psycopg2.extras import RealDictCursor
-
 """
 Queries de agendamentos — funções puras que recebem conn + parâmetros e retornam rows.
 """
+from psycopg2.extras import RealDictCursor
 
 
 def list_semana(conn, usuario_id: int) -> list[dict]:
