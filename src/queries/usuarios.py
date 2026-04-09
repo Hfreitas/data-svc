@@ -6,8 +6,6 @@ from psycopg2.extras import RealDictCursor
 
 
 def find_by_telefone(conn, telefone: str) -> dict | None:
-    # TODO: implementar
-    # Executar SELECT por numero_telefone, retornar dict ou None
     sql = """
         SELECT
             id, numero_telefone, nome, razao_social, email,
@@ -29,9 +27,6 @@ def find_by_telefone(conn, telefone: str) -> dict | None:
 
 
 def upsert(conn, numero_telefone: str, nome: str, razao_social: str) -> dict:
-    # TODO: implementar
-    # Executar CTE: existing_user + inserted_user (evita race condition)
-    # Retornar dict com dados do usuário (existente ou recém-criado)
     sql = """
         WITH existing_user AS (
         SELECT * FROM public.usuarios
@@ -68,9 +63,6 @@ def upsert(conn, numero_telefone: str, nome: str, razao_social: str) -> dict:
 
 
 def update(conn, usuario_id: int, fields: dict) -> dict | None:
-    # TODO: implementar
-    # Executar UPDATE com COALESCE para campos permitidos
-    # Retornar dict com dados atualizados ou None se não encontrado
     sql = """
         UPDATE public.usuarios
         SET
