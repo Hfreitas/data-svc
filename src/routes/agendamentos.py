@@ -5,7 +5,7 @@ from flask import Blueprint, request
 from src.db import get_db_conn
 from src.cache import cache_get, cache_invalidate_prefix, cache_set
 from src.config import Config
-from src.utils.validators import validade_status_agendamento, validate_agendamento_payload, validate_semana_agendamento
+from src.utils.validators import validate_status_agendamento, validate_agendamento_payload, validate_semana_agendamento
 import src.queries.agendamentos as q
 from src.utils.api_response import fail, ok
 
@@ -14,7 +14,7 @@ agendamentos_bp = Blueprint("agendamentos", __name__)
 
 @agendamentos_bp.route("/usuarios/<int:usuario_id>/agendamentos", methods=["GET"])
 def list_agendamentos(usuario_id: int):
-    semana = validate_semana_agendamento(request.args.get("semana"))
+    validate_semana_agendamento(request.args.get("semana"))
     iso = date.today().isocalendar()
     semana_iso = f"{iso.year}-W{iso.week:02d}"
     
@@ -43,7 +43,7 @@ def create_agendamento(usuario_id: int):
         
         cache_invalidate_prefix("agendamentos", f"{usuario_id}:")
         
-        return agendamento
+        return ok(200 ,agendamento)
 
 
 @agendamentos_bp.route(
@@ -54,7 +54,7 @@ def update_agendamento(usuario_id: int, agendamento_id: int):
     if not isinstance(body, dict):
         return fail("body_invalido", "JSON inválido ou ausente", 400)
     
-    status = validade_status_agendamento(body.get("status"))
+    status = validate_status_agendamento(body.get("status"))
     
     with get_db_conn() as conn:
         agendamento = q.update_status(conn, agendamento_id, usuario_id, status)

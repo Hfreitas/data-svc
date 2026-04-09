@@ -1,7 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 import re
-import stat
 from typing import Final
 from zoneinfo import ZoneInfo
 from flask import abort
@@ -125,38 +124,43 @@ def validate_semana_agendamento(semana: str) -> str:
 def validate_agendamento_payload(body: dict) -> dict:
     """Valida o corpo da requisição de create de um agendamento"""
     require_fields(body, "nome_compromisso", "data_compromisso", "hora_compromisso")
-    
-    if not body.get("nome_compromisso").strip():
-        return abort(400, description="o campo 'nome_compromisso' não deve ser vazio")
-    
+
+    nome_compromisso = str(body.get("nome_compromisso", "")).strip()
+    if not nome_compromisso:
+        abort(400, description="o campo 'nome_compromisso' não deve ser vazio")
+
     tz = ZoneInfo("America/Sao_Paulo")
 
     try:
-        data_compromisso = date.fromisoformat(body.get("data_compromisso"))
+        data_compromisso = date.fromisoformat(str(body.get("data_compromisso", "")).strip())
     except (TypeError, ValueError):
-        return abort(400, description="o campo 'data_compromisso' deve estar no formato YYYY-MM-DD")
-    
+        abort(400, description="o campo 'data_compromisso' deve estar no formato YYYY-MM-DD")
+
     try:
-        hora_compromisso = datetime.strptime(body.get("hora_compromisso"), "%H:%M").time()
-    except ValueError:
-        return abort(400, "o campo 'hora_compromisso' deve estar no formato HH:MM")
+        hora_compromisso = datetime.strptime(str(body.get("hora_compromisso", "")).strip(), "%H:%M").time()
+    except (TypeError, ValueError):
+        abort(400, "o campo 'hora_compromisso' deve estar no formato HH:MM")
 
     agora = datetime.now(tz)
     hoje = agora.date()
 
     if data_compromisso < hoje:
-        return abort(400, "não é permitido agendar uma data no passado")
+        abort(400, "não é permitido agendar uma data no passado")
 
     if data_compromisso == hoje and hora_compromisso <= agora.time():
-        return abort(400, "não é permitido agendar um horário no passado")
-    
+        abort(400, "não é permitido agendar um horário no passado")
+
+    body["nome_compromisso"] = nome_compromisso
+    body["data_compromisso"] = data_compromisso.isoformat()
+    body["hora_compromisso"] = hora_compromisso.strftime("%H:%M")
+
     return body
 
 
-def validade_status_agendamento(status: str) -> str:
+def validate_status_agendamento(status: str) -> str:
     """Valida se o status informado para o agendamento é correto"""
     if not status:
-        return abort(400, description="o campo 'status' não pode ser vazio")
+        abort(400, description="o campo 'status' não pode ser vazio")
     
     status = status.lower()
     
