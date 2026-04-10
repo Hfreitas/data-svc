@@ -26,12 +26,16 @@ def list_listas(usuario_id: int):
 
 @listas_bp.route("/usuarios/<int:usuario_id>/listas/<int:lista_id>/itens", methods=["GET"])
 def list_itens(usuario_id: int, lista_id: int):
-    # TODO: implementar
-    # 1. checar cache 'itens_lista:{lista_id}'
-    # 2. chamar q.list_itens(conn, lista_id, usuario_id)
-    # 3. armazenar no cache com TTL CACHE_TTL_LISTAS
-    # 4. retornar lista de itens
-    pass
+    itens_lista = cache_get("itens_lista", lista_id)
+    if itens_lista:
+        return ok(200, itens_lista)
+    
+    with get_db_conn() as conn:
+        itens_lista = q.list_itens(conn, lista_id, usuario_id)
+        
+        cache_set("itens_lista", lista_id, itens_lista, Config.CACHE_TTL_LISTAS)
+        
+        return ok(200, itens_lista)
 
 
 @listas_bp.route("/usuarios/<int:usuario_id>/listas/<int:lista_id>/itens", methods=["POST"])

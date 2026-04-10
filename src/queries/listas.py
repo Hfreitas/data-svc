@@ -23,11 +23,26 @@ def list_listas(conn, usuario_id: int) -> list[dict]:
 
 
 def list_itens(conn, lista_id: int, usuario_id: int) -> list[dict]:
-    # TODO: implementar
-    # Executar SELECT verificando ownership via EXISTS
-    # Retornar lista de dicts { id, nome_item, quantidade, preco_unitario, preco_total }
-    pass
-
+    sql = """
+        SELECT
+            il.id,
+            il.nome_item,
+            il.quantidade,
+            il.preco_unitario,
+            il.preco_total
+        FROM public.itens_lista il
+        WHERE il.lista_id = %(lista_id)s
+        AND EXISTS (
+            SELECT 1 FROM public.lista_compras lc
+            WHERE lc.id = %(lista_id)s AND lc.usuario_id = %(usuario_id)s)
+        ORDER BY il.nome_item;
+    """
+    
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"lista_id": lista_id, "usuario_id": usuario_id})
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+    
 
 def upsert_itens(conn, lista_id: int, usuario_id: int, itens: list[dict]) -> list[dict]:
     # TODO: implementar
