@@ -5,18 +5,23 @@ from src.cache import cache_get, cache_set, cache_invalidate
 from src.config import Config
 from src.utils.validators import require_fields
 import src.queries.listas as q
+from src.utils.api_response import ok
 
 listas_bp = Blueprint("listas", __name__)
 
 
 @listas_bp.route("/usuarios/<int:usuario_id>/listas", methods=["GET"])
 def list_listas(usuario_id: int):
-    # TODO: implementar
-    # 1. checar cache 'listas:{usuario_id}'
-    # 2. chamar q.list_listas(conn, usuario_id)
-    # 3. armazenar no cache com TTL CACHE_TTL_LISTAS
-    # 4. retornar lista com id, nome_lista, total_itens
-    pass
+    listas = cache_get("listas", usuario_id)
+    if listas:
+        return ok(200, listas)
+    
+    with get_db_conn() as conn:
+        listas = q.list_listas(conn, usuario_id)
+        
+        cache_set("listas", usuario_id, listas, Config.CACHE_TTL_LISTAS)
+        
+        return ok(200, listas)
 
 
 @listas_bp.route("/usuarios/<int:usuario_id>/listas/<int:lista_id>/itens", methods=["GET"])

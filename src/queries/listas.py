@@ -1,13 +1,25 @@
 """
 Queries de listas de compras — funções puras que recebem conn + parâmetros e retornam rows.
 """
+from psycopg2.extras import RealDictCursor
 
 
 def list_listas(conn, usuario_id: int) -> list[dict]:
-    # TODO: implementar
-    # Executar SELECT lc + COUNT itens LEFT JOIN
-    # Retornar lista de dicts { id, nome_lista, total_itens }
-    pass
+    sql = """
+        SELECT
+            lc.id,
+            lc.nome_lista,
+            COUNT(il.id) AS total_itens
+        FROM public.lista_compras lc
+        LEFT JOIN public.itens_lista il ON lc.id = il.lista_id
+        WHERE lc.usuario_id = %(usuario_id)s
+        GROUP BY lc.id, lc.nome_lista
+        ORDER BY lc.data_atualizacao DESC;
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"usuario_id": usuario_id})
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
 
 
 def list_itens(conn, lista_id: int, usuario_id: int) -> list[dict]:
