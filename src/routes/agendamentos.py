@@ -5,7 +5,11 @@ from flask import Blueprint, request
 from src.db import get_db_conn
 from src.cache import cache_get, cache_invalidate_prefix, cache_set
 from src.config import Config
-from src.utils.validators import validate_status_agendamento, validate_agendamento_payload, validate_semana_agendamento
+from src.utils.validators.validator_agendamentos import (
+    validate_agendamento_payload,
+    validate_semana_agendamento,
+    validate_status_agendamento,
+)
 import src.queries.agendamentos as q
 from src.utils.api_response import fail, ok
 

@@ -3,7 +3,11 @@ from flask import Blueprint, request
 from src.db import get_db_conn
 from src.cache import cache_get, cache_invalidate_prefix, cache_set
 from src.config import Config
-from src.utils.validators import validate_comprovante_payload, validate_mes, validate_modo
+from src.utils.validators.validator_comprovantes import (
+    validate_comprovante_payload,
+    validate_mes,
+    validate_modo,
+)
 import src.queries.comprovantes as q
 from src.utils.api_response import fail, ok
 

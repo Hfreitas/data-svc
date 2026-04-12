@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify
 from src.db import get_db_conn
 from src.cache import cache_get, cache_set, cache_invalidate
 from src.config import Config
-from src.utils.validators import validate_telefone, require_fields
+from src.utils.validators.validator_usuarios import require_fields, validate_telefone
 import src.queries.usuarios as q
 from src.utils.api_response import fail, ok
 

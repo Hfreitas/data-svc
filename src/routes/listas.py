@@ -3,7 +3,7 @@ from flask import Blueprint, request
 from src.db import get_db_conn
 from src.cache import cache_get, cache_set, cache_invalidate
 from src.config import Config
-from src.utils.validators import (
+from src.utils.validators.validator_listas import (
     validate_lista_delete_itens_payload,
     validate_lista_itens_payload,
 )
