@@ -1,6 +1,8 @@
 """
 Queries de listas de compras — funções puras que recebem conn + parâmetros e retornam rows.
 """
+import json
+
 from psycopg2.extras import RealDictCursor
 
 
@@ -45,10 +47,36 @@ def list_itens(conn, lista_id: int, usuario_id: int) -> list[dict]:
     
 
 def upsert_itens(conn, lista_id: int, usuario_id: int, itens: list[dict]) -> list[dict]:
-    # TODO: implementar
-    # Executar INSERT ... ON CONFLICT (lista_id, nome_item) DO UPDATE via json_array_elements
-    # Retornar lista de dicts com itens inseridos/atualizados
-    pass
+    sql = """
+        INSERT INTO public.itens_lista (lista_id, nome_item, quantidade, preco_unitario)
+        SELECT
+            %(lista_id)s,
+            LOWER(TRIM(item->>'nome_item')),
+            COALESCE(NULLIF(TRIM(item->>'quantidade'), ''), '1')::numeric,
+            COALESCE(NULLIF(TRIM(item->>'preco_unitario'), ''), '0')::numeric
+        FROM json_array_elements(%(itens)s::json) AS item
+        WHERE EXISTS (
+            SELECT 1
+            FROM public.lista_compras lc
+            WHERE lc.id = %(lista_id)s AND lc.usuario_id = %(usuario_id)s
+        )
+        ON CONFLICT (lista_id, nome_item)
+        DO UPDATE SET
+            quantidade     = EXCLUDED.quantidade,
+            preco_unitario = EXCLUDED.preco_unitario
+        RETURNING nome_item, quantidade, preco_unitario;
+    """
+
+    params = {
+        "lista_id": lista_id,
+        "usuario_id": usuario_id,
+        "itens": json.dumps(itens),
+    }
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
 
 
 def delete_itens(conn, lista_id: int, usuario_id: int, nomes: list[str]) -> list[str]:
