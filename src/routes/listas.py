@@ -3,7 +3,10 @@ from flask import Blueprint, request
 from src.db import get_db_conn
 from src.cache import cache_get, cache_set, cache_invalidate
 from src.config import Config
-from src.utils.validators import validate_lista_itens_payload
+from src.utils.validators import (
+    validate_lista_delete_itens_payload,
+    validate_lista_itens_payload,
+)
 import src.queries.listas as q
 from src.utils.api_response import fail, ok
 
@@ -56,9 +59,15 @@ def upsert_itens(usuario_id: int, lista_id: int):
 
 @listas_bp.route("/usuarios/<int:usuario_id>/listas/<int:lista_id>/itens", methods=["DELETE"])
 def delete_itens(usuario_id: int, lista_id: int):
-    # TODO: implementar
-    # 1. validar body (array 'nomes' com pelo menos um elemento)
-    # 2. chamar q.delete_itens(conn, lista_id, usuario_id, nomes)
-    # 3. invalidar cache 'itens_lista:{lista_id}'
-    # 4. retornar { removidos: [...] }
-    pass
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return fail("body_invalido", "JSON inválido ou ausente", 400)
+
+    nomes = validate_lista_delete_itens_payload(body)
+
+    with get_db_conn() as conn:
+        removidos = q.delete_itens(conn, lista_id, usuario_id, nomes)
+
+        cache_invalidate("itens_lista", lista_id)
+
+        return ok(200, {"removidos": removidos})

@@ -80,7 +80,21 @@ def upsert_itens(conn, lista_id: int, usuario_id: int, itens: list[dict]) -> lis
 
 
 def delete_itens(conn, lista_id: int, usuario_id: int, nomes: list[str]) -> list[str]:
-    # TODO: implementar
-    # Executar DELETE WHERE nome_item = ANY e ownership via EXISTS
-    # Retornar lista de nomes removidos
-    pass
+    sql = """
+        WITH deleted AS (
+            DELETE FROM public.itens_lista
+            WHERE lista_id = %(lista_id)s
+              AND LOWER(TRIM(nome_item)) = ANY(%(nomes)s)
+              AND EXISTS (
+                SELECT 1 FROM public.lista_compras lc
+                WHERE lc.id = %(lista_id)s AND lc.usuario_id = %(usuario_id)s)
+            RETURNING nome_item
+        )
+        SELECT COALESCE(array_agg(nome_item), ARRAY[]::text[]) AS removidos
+        FROM deleted;
+    """
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"lista_id": lista_id, "usuario_id": usuario_id, "nomes": nomes})
+        row = cursor.fetchone()
+        return list(row["removidos"]) if row and row["removidos"] else []

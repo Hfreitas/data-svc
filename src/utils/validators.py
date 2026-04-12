@@ -245,3 +245,19 @@ def validate_lista_itens_payload(body: dict) -> list[dict]:
         )
 
     return itens_normalizados
+
+
+def validate_lista_delete_itens_payload(body: dict) -> list[str]:
+    """Valida payload de remoção de itens e normaliza nomes para busca."""
+    nomes = body.get("nomes")
+    if not isinstance(nomes, list) or not nomes:
+        abort(400, description="o campo 'nomes' deve ser um array com pelo menos um item")
+
+    nomes_normalizados: list[str] = []
+    for idx, nome in enumerate(nomes):
+        nome_normalizado = str(nome).strip().lower()
+        if not nome_normalizado:
+            abort(400, description=f"o item na posição {idx} do campo 'nomes' não pode ser vazio")
+        nomes_normalizados.append(nome_normalizado)
+
+    return nomes_normalizados
