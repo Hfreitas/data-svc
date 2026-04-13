@@ -1,7 +1,7 @@
 from flask import Blueprint, request
 
 from src.db import get_db_conn
-from src.utils.validators import validate_conta_recorrente_payload
+from src.utils.validators.validator_contas import validate_conta_recorrente_payload
 import src.queries.contas as q
 from src.utils.api_response import fail, ok
 
