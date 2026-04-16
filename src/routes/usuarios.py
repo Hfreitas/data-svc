@@ -34,13 +34,13 @@ def get_usuario():
 def create_usuario():
     body = request.get_json()
     
-    require_fields(body, "numero_telefone", "nome", "razao_social")
-    
+    require_fields(body, "numero_telefone")
+
     numero_telefone = body["numero_telefone"]
     validate_telefone(numero_telefone)
-    
+
     with get_db_conn() as conn:
-        usuario = q.upsert(conn, numero_telefone, body["nome"], body["razao_social"])
+        usuario = q.upsert(conn, numero_telefone, body.get("nome"), body.get("razao_social"))
         
         cache_invalidate("usuario", numero_telefone)
         
