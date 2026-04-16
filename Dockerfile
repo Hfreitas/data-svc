@@ -11,4 +11,4 @@ ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
-CMD ["gunicorn", "--workers=2", "--bind=0.0.0.0:5000", "src.app:create_app()"]
+CMD ["gunicorn", "--workers=2", "--bind=0.0.0.0:8000", "src.app:create_app()"]
