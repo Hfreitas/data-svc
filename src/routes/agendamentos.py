@@ -1,11 +1,9 @@
-from datetime import date
-
 from flask import Blueprint, request
 
 from src.db import get_db_conn
 from src.cache import cache_get, cache_invalidate_prefix, cache_set
 from src.config import Config
-from src.utils.validators import validate_status_agendamento, validate_agendamento_payload, validate_semana_agendamento
+from src.utils.validators import validate_status_agendamento, validate_agendamento_payload, validate_scope_agendamento
 import src.queries.agendamentos as q
 from src.utils.api_response import fail, ok
 
@@ -14,19 +12,18 @@ agendamentos_bp = Blueprint("agendamentos", __name__)
 
 @agendamentos_bp.route("/usuarios/<int:usuario_id>/agendamentos", methods=["GET"])
 def list_agendamentos(usuario_id: int):
-    validate_semana_agendamento(request.args.get("semana"))
-    iso = date.today().isocalendar()
-    semana_iso = f"{iso.year}-W{iso.week:02d}"
-    
-    agendamentos = cache_get("agendamentos", f"{usuario_id}:{semana_iso}")
+    scope = validate_scope_agendamento(request.args.get("scope"))
+
+    cache_key = f"{usuario_id}:{scope}"
+    agendamentos = cache_get("agendamentos", cache_key)
     if agendamentos:
-        return ok(200, agendamentos) 
-    
+        return ok(200, agendamentos)
+
     with get_db_conn() as conn:
-        agendamentos = q.list_semana(conn, usuario_id)
-        
-        cache_set("agendamentos", f"{usuario_id}:{semana_iso}", agendamentos, Config.CACHE_TTL_AGENDAMENTOS)
-        
+        agendamentos = q.list_agendamentos(conn, usuario_id)
+
+        cache_set("agendamentos", cache_key, agendamentos, Config.CACHE_TTL_AGENDAMENTOS)
+
         return ok(200, agendamentos)
 
 

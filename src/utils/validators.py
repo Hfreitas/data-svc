@@ -21,8 +21,9 @@ _OPERACAO_ALIASES: Final[dict[str, str]] = {
     "venda": "venda",
 }
 
-_SEMANA_ALIASES: Final[dict[str, str]] = {
-    "atual": "atual"
+
+_SCOPE_AGENDAMENTO_ALIASES: Final[dict[str, str]] = {
+    "future": "future"
 }
 
 _STATUS_AGENDAMENTO: Final[set[str]] = {
@@ -121,14 +122,14 @@ def validate_comprovante_payload(body: dict) -> dict:
     return body
 
 
-def validate_semana_agendamento(semana: str) -> str:
-    """Valida se a semana informada em agendamentos é correta"""
-    raw = (semana or "").strip().lower()
-    normalizado = _SEMANA_ALIASES.get(raw)
+def validate_scope_agendamento(scope: str) -> str:
+    """Valida se o escopo informado em agendamentos é correto"""
+    raw = (scope or "").strip().lower()
+    normalizado = _SCOPE_AGENDAMENTO_ALIASES.get(raw)
 
     if normalizado is None:
-        permitidos = ", ".join(sorted(_SEMANA_ALIASES.keys()))
-        abort(400, description=f"parâmetro 'semana' inválido. Use: {permitidos}")
+        permitidos = ", ".join(sorted(_SCOPE_AGENDAMENTO_ALIASES.keys()))
+        abort(400, description=f"parâmetro 'scope' inválido. Use: {permitidos}")
 
     return normalizado
 

@@ -4,7 +4,7 @@ Queries de agendamentos — funções puras que recebem conn + parâmetros e ret
 from psycopg2.extras import RealDictCursor
 
 
-def list_semana(conn, usuario_id: int) -> list[dict]:
+def list_agendamentos(conn, usuario_id: int) -> list[dict]:
     sql = """
         SELECT
             id,
@@ -15,11 +15,10 @@ def list_semana(conn, usuario_id: int) -> list[dict]:
         FROM public.agendamentos
         WHERE usuario_id = %(usuario_id)s
             AND status IN ('pendente', 'confirmado', 'agendado')
-            AND data_compromisso >= date_trunc('week', NOW() AT TIME ZONE 'America/Sao_Paulo')::date
-            AND data_compromisso <  date_trunc('week', NOW() AT TIME ZONE 'America/Sao_Paulo')::date + INTERVAL '7 day'
+            AND (data_compromisso::timestamp + hora_compromisso) > (NOW() AT TIME ZONE 'America/Sao_Paulo')
         ORDER BY data_compromisso, hora_compromisso;
     """
-    
+
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
         cursor.execute(sql, {"usuario_id": usuario_id})
         rows = cursor.fetchall()
