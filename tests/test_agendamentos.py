@@ -6,11 +6,12 @@ from src.config import Config
 class TestListAgendamentos:
     def test_lista_compromissos_futuros_com_scope_future(self, client, mock_db_conn, mocker):
         usuario_id = 1
+        data_futura = (date.today() + timedelta(days=9)).isoformat()
         agendamentos_fake = [
             {
                 "id": 9,
                 "nome_compromisso": "Follow-up comercial",
-                "data_compromisso": "2026-05-12",
+                "data_compromisso": data_futura,
                 "hora_compromisso": "15:30",
                 "status": "agendado",
             }
@@ -36,11 +37,12 @@ class TestListAgendamentos:
 
     def test_usa_cache_na_segunda_chamada(self, client, mock_db_conn, mocker):
         usuario_id = 1
+        data_futura = (date.today() + timedelta(days=9)).isoformat()
         agendamentos_fake = [
             {
                 "id": 9,
                 "nome_compromisso": "Follow-up comercial",
-                "data_compromisso": "2026-05-12",
+                "data_compromisso": data_futura,
                 "hora_compromisso": "15:30",
                 "status": "agendado",
             }
