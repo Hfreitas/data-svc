@@ -4,33 +4,32 @@ from src.config import Config
 
 
 class TestListAgendamentos:
-    def test_lista_compromissos_da_semana(self, client, mock_db_conn, mocker):
+    def test_lista_compromissos_futuros_com_scope_future(self, client, mock_db_conn, mocker):
         usuario_id = 1
         agendamentos_fake = [
             {
-                "id": 5,
-                "nome_compromisso": "Reunião com cliente",
-                "data_compromisso": "2026-04-21",
-                "hora_compromisso": "10:00",
-                "status": "confirmado",
+                "id": 9,
+                "nome_compromisso": "Follow-up comercial",
+                "data_compromisso": "2026-05-12",
+                "hora_compromisso": "15:30",
+                "status": "agendado",
             }
         ]
         _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
-        iso = date.today().isocalendar()
-        semana_iso = f"{iso.year}-W{iso.week:02d}"
 
-        mocker.patch("src.routes.agendamentos.cache_get", return_value=None)
-        list_mock = mocker.patch("src.routes.agendamentos.q.list_semana", return_value=agendamentos_fake)
+        cache_get_mock = mocker.patch("src.routes.agendamentos.cache_get", return_value=None)
+        list_mock = mocker.patch("src.routes.agendamentos.q.list_agendamentos", return_value=agendamentos_fake)
         cache_set_mock = mocker.patch("src.routes.agendamentos.cache_set")
 
-        resp = client.get(f"/usuarios/{usuario_id}/agendamentos?semana=atual")
+        resp = client.get(f"/usuarios/{usuario_id}/agendamentos?scope=future")
 
         assert resp.status_code == 200
         assert resp.get_json() == agendamentos_fake
+        cache_get_mock.assert_called_once_with("agendamentos", f"{usuario_id}:future")
         list_mock.assert_called_once_with(conn, usuario_id)
         cache_set_mock.assert_called_once_with(
             "agendamentos",
-            f"{usuario_id}:{semana_iso}",
+            f"{usuario_id}:future",
             agendamentos_fake,
             Config.CACHE_TTL_AGENDAMENTOS,
         )
@@ -39,11 +38,11 @@ class TestListAgendamentos:
         usuario_id = 1
         agendamentos_fake = [
             {
-                "id": 5,
-                "nome_compromisso": "Reunião com cliente",
-                "data_compromisso": "2026-04-21",
-                "hora_compromisso": "10:00",
-                "status": "confirmado",
+                "id": 9,
+                "nome_compromisso": "Follow-up comercial",
+                "data_compromisso": "2026-05-12",
+                "hora_compromisso": "15:30",
+                "status": "agendado",
             }
         ]
         get_db_conn_mock, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
@@ -52,11 +51,11 @@ class TestListAgendamentos:
             "src.routes.agendamentos.cache_get",
             side_effect=[None, agendamentos_fake],
         )
-        list_mock = mocker.patch("src.routes.agendamentos.q.list_semana", return_value=agendamentos_fake)
+        list_mock = mocker.patch("src.routes.agendamentos.q.list_agendamentos", return_value=agendamentos_fake)
         mocker.patch("src.routes.agendamentos.cache_set")
 
-        resp_1 = client.get(f"/usuarios/{usuario_id}/agendamentos?semana=atual")
-        resp_2 = client.get(f"/usuarios/{usuario_id}/agendamentos?semana=atual")
+        resp_1 = client.get(f"/usuarios/{usuario_id}/agendamentos?scope=future")
+        resp_2 = client.get(f"/usuarios/{usuario_id}/agendamentos?scope=future")
 
         assert resp_1.status_code == 200
         assert resp_2.status_code == 200
@@ -65,6 +64,22 @@ class TestListAgendamentos:
         assert cache_get_mock.call_count == 2
         list_mock.assert_called_once_with(conn, usuario_id)
         get_db_conn_mock.assert_called_once()
+
+    def test_retorna_400_sem_scope(self, client):
+        resp = client.get("/usuarios/1/agendamentos")
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["error"] == "bad_request"
+        assert "parâmetro 'scope' inválido" in data["detail"]
+
+    def test_retorna_400_para_scope_invalido(self, client):
+        resp = client.get("/usuarios/1/agendamentos?scope=week")
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["error"] == "bad_request"
+        assert "parâmetro 'scope' inválido" in data["detail"]
 
 
 class TestCreateAgendamento:
