@@ -3,7 +3,7 @@ from flask import Blueprint, request
 from src.db import get_db_conn
 from src.cache import cache_get, cache_invalidate_prefix, cache_set
 from src.config import Config
-from src.utils.validators import validate_status_agendamento, validate_agendamento_payload, validate_scope_agendamento
+from src.utils.validators import validate_agendamento_payload, validate_scope_agendamento, validate_update_agendamento_payload
 import src.queries.agendamentos as q
 from src.utils.api_response import fail, ok
 
@@ -51,10 +51,10 @@ def update_agendamento(usuario_id: int, agendamento_id: int):
     if not isinstance(body, dict):
         return fail("body_invalido", "JSON inválido ou ausente", 400)
     
-    status = validate_status_agendamento(body.get("status"))
+    validated_data = validate_update_agendamento_payload(body)
     
     with get_db_conn() as conn:
-        agendamento = q.update_status(conn, agendamento_id, usuario_id, status)
+        agendamento = q.update(conn, agendamento_id, usuario_id, validated_data)
         
         if agendamento is None:
             return fail("agendamento_nao_encontrado", f"o agendamento com id {agendamento_id} para o usuário informado não foi encontrado", status_code=404)
