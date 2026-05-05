@@ -187,3 +187,70 @@ class TestUpdateAgendamento:
         assert str(agendamento_id) in data["detail"]
         update_mock.assert_called_once_with(conn, agendamento_id, usuario_id, "confirmado")
         invalidate_prefix_mock.assert_not_called()
+
+
+class TestCancelAllAgendamentos:
+    def test_cancela_todos_agendamentos_ativos(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        data_futura = (date.today() + timedelta(days=5)).isoformat()
+        agendamentos_cancelados = [
+            {
+                "nome_compromisso": "Reunião com gerente",
+                "data_compromisso": data_futura,
+                "hora_compromisso": "10:00",
+            },
+            {
+                "nome_compromisso": "Ligação de acompanhamento",
+                "data_compromisso": data_futura,
+                "hora_compromisso": "14:30",
+            },
+        ]
+        _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
+
+        cancel_all_mock = mocker.patch(
+            "src.routes.agendamentos.q.cancel_all",
+            return_value=agendamentos_cancelados,
+        )
+        invalidate_prefix_mock = mocker.patch("src.routes.agendamentos.cache_invalidate_prefix")
+
+        resp = client.delete(f"/usuarios/{usuario_id}/agendamentos")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == agendamentos_cancelados
+        cancel_all_mock.assert_called_once_with(conn, usuario_id)
+        invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
+
+    def test_retorna_lista_vazia_sem_agendamentos_ativos(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
+
+        cancel_all_mock = mocker.patch(
+            "src.routes.agendamentos.q.cancel_all",
+            return_value=[],
+        )
+        invalidate_prefix_mock = mocker.patch("src.routes.agendamentos.cache_invalidate_prefix")
+
+        resp = client.delete(f"/usuarios/{usuario_id}/agendamentos")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == []
+        cancel_all_mock.assert_called_once_with(conn, usuario_id)
+        invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
+
+    def test_invalida_cache_apos_cancelamento_em_massa(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        agendamentos_cancelados = [
+            {
+                "nome_compromisso": "Compromisso 1",
+                "data_compromisso": (date.today() + timedelta(days=3)).isoformat(),
+                "hora_compromisso": "09:00",
+            },
+        ]
+        mock_db_conn("src.routes.agendamentos.get_db_conn")
+        mocker.patch("src.routes.agendamentos.q.cancel_all", return_value=agendamentos_cancelados)
+        invalidate_prefix_mock = mocker.patch("src.routes.agendamentos.cache_invalidate_prefix")
+
+        resp = client.delete(f"/usuarios/{usuario_id}/agendamentos")
+
+        assert resp.status_code == 200
+        invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
