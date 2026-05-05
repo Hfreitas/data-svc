@@ -29,7 +29,8 @@ _SCOPE_AGENDAMENTO_ALIASES: Final[dict[str, str]] = {
 _STATUS_AGENDAMENTO: Final[set[str]] = {
     "pendente",
     "confirmado",
-    "agendado"
+    "agendado",
+    "cancelado"
 }
 
 _TIPOS_CONTA_RECORRENTE: Final[set[str]] = {
