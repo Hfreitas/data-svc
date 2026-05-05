@@ -62,3 +62,13 @@ def update_agendamento(usuario_id: int, agendamento_id: int):
         cache_invalidate_prefix("agendamentos", f"{usuario_id}:")
         
         return ok(200, agendamento)
+
+
+@agendamentos_bp.route("/usuarios/<int:usuario_id>/agendamentos", methods=["DELETE"])
+def cancel_all_agendamentos(usuario_id: int):
+    with get_db_conn() as conn:
+        agendamentos_cancelados = q.cancel_all(conn, usuario_id)
+        
+        cache_invalidate_prefix("agendamentos", f"{usuario_id}:")
+        
+        return ok(200, agendamentos_cancelados)
