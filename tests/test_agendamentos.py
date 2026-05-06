@@ -380,7 +380,7 @@ class TestCancelAllAgendamentos:
 class TestCancelRecurrence:
     def test_cancela_agendamentos_recorrentes(self, client, mock_db_conn, mocker):
         usuario_id = 1
-        recorrencia_id = 42
+        recorrencia_id = "550e8400-e29b-41d4-a716-446655440000"
         data_futura = (date.today() + timedelta(days=5)).isoformat()
         agendamentos_cancelados = [
             {
@@ -411,7 +411,7 @@ class TestCancelRecurrence:
 
     def test_retorna_lista_vazia_sem_recorrencia(self, client, mock_db_conn, mocker):
         usuario_id = 1
-        recorrencia_id = 999
+        recorrencia_id = "550e8400-e29b-41d4-a716-446655440001"
         _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
 
         cancel_recurrence_mock = mocker.patch(
@@ -429,7 +429,7 @@ class TestCancelRecurrence:
 
     def test_invalida_cache_apos_cancelamento_recorrencia(self, client, mock_db_conn, mocker):
         usuario_id = 1
-        recorrencia_id = 42
+        recorrencia_id = "550e8400-e29b-41d4-a716-446655440002"
         agendamentos_cancelados = [
             {
                 "nome_compromisso": "Reunião mensal",
@@ -627,3 +627,137 @@ class TestCreateRecurrence:
 
         assert resp.status_code == 201
         invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
+
+
+class TestCheckConflicts:
+    def test_detecta_conflito_existente(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        data_futura = (date.today() + timedelta(days=5)).isoformat()
+        conflito_result = {
+            "conflito": True,
+            "total": 1,
+            "descricao": "Reunião com cliente às 10:00",
+        }
+        _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
+
+        check_conflicts_mock = mocker.patch(
+            "src.routes.agendamentos.q.check_conflicts",
+            return_value=conflito_result,
+        )
+
+        resp = client.get(
+            f"/usuarios/{usuario_id}/agendamentos/conflitos?"
+            f"data={data_futura}&hora=10:00&nome_compromisso=Reunião"
+        )
+
+        assert resp.status_code == 200
+        assert resp.get_json() == conflito_result
+        check_conflicts_mock.assert_called_once()
+
+    def test_retorna_sem_conflito(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        data_futura = (date.today() + timedelta(days=5)).isoformat()
+        sem_conflito_result = {
+            "conflito": False,
+            "total": 0,
+            "descricao": None,
+        }
+        _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
+
+        check_conflicts_mock = mocker.patch(
+            "src.routes.agendamentos.q.check_conflicts",
+            return_value=sem_conflito_result,
+        )
+
+        resp = client.get(
+            f"/usuarios/{usuario_id}/agendamentos/conflitos?"
+            f"data={data_futura}&hora=15:00&nome_compromisso=Nova Reunião"
+        )
+
+        assert resp.status_code == 200
+        assert resp.get_json() == sem_conflito_result
+
+    def test_retorna_400_sem_parametros(self, client):
+        usuario_id = 1
+
+        resp = client.get(f"/usuarios/{usuario_id}/agendamentos/conflitos")
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["error"] == "bad_request"
+        assert "obrigatório" in data["detail"].lower()
+
+    def test_retorna_400_data_invalida(self, client):
+        usuario_id = 1
+
+        resp = client.get(
+            f"/usuarios/{usuario_id}/agendamentos/conflitos?"
+            f"data=2026-13-45&hora=10:00&nome_compromisso=Reunião"
+        )
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert "data" in data["detail"].lower()
+
+    def test_retorna_400_hora_invalida(self, client):
+        usuario_id = 1
+        data_futura = (date.today() + timedelta(days=5)).isoformat()
+
+        resp = client.get(
+            f"/usuarios/{usuario_id}/agendamentos/conflitos?"
+            f"data={data_futura}&hora=25:99&nome_compromisso=Reunião"
+        )
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert "hora" in data["detail"].lower()
+
+    def test_retorna_400_nome_vazio(self, client):
+        usuario_id = 1
+        data_futura = (date.today() + timedelta(days=5)).isoformat()
+
+        resp = client.get(
+            f"/usuarios/{usuario_id}/agendamentos/conflitos?"
+            f"data={data_futura}&hora=10:00&nome_compromisso="
+        )
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert "nome_compromisso" in data["detail"].lower()
+
+    def test_retorna_400_data_passada(self, client):
+        usuario_id = 1
+        data_passada = (date.today() - timedelta(days=1)).isoformat()
+
+        resp = client.get(
+            f"/usuarios/{usuario_id}/agendamentos/conflitos?"
+            f"data={data_passada}&hora=10:00&nome_compromisso=Reunião"
+        )
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert "passado" in data["detail"].lower()
+
+    def test_detecta_multiplos_conflitos(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        data_futura = (date.today() + timedelta(days=5)).isoformat()
+        multiplos_conflitos = {
+            "conflito": True,
+            "total": 2,
+            "descricao": "Reunião com cliente às 10:00, Reunião de Sprint às 10:15",
+        }
+        _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
+
+        check_conflicts_mock = mocker.patch(
+            "src.routes.agendamentos.q.check_conflicts",
+            return_value=multiplos_conflitos,
+        )
+
+        resp = client.get(
+            f"/usuarios/{usuario_id}/agendamentos/conflitos?"
+            f"data={data_futura}&hora=10:00&nome_compromisso=Reunião"
+        )
+
+        assert resp.status_code == 200
+        assert resp.get_json()["total"] == 2
+        assert resp.get_json()["conflito"] is True
