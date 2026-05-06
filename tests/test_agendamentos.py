@@ -375,3 +375,255 @@ class TestCancelAllAgendamentos:
 
         assert resp.status_code == 200
         invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
+
+
+class TestCancelRecurrence:
+    def test_cancela_agendamentos_recorrentes(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        recorrencia_id = 42
+        data_futura = (date.today() + timedelta(days=5)).isoformat()
+        agendamentos_cancelados = [
+            {
+                "nome_compromisso": "Reunião semanal",
+                "data_compromisso": data_futura,
+                "hora_compromisso": "10:00",
+            },
+            {
+                "nome_compromisso": "Reunião semanal",
+                "data_compromisso": (date.today() + timedelta(days=12)).isoformat(),
+                "hora_compromisso": "10:00",
+            },
+        ]
+        _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
+
+        cancel_recurrence_mock = mocker.patch(
+            "src.routes.agendamentos.q.cancel_recurrence",
+            return_value=agendamentos_cancelados,
+        )
+        invalidate_prefix_mock = mocker.patch("src.routes.agendamentos.cache_invalidate_prefix")
+
+        resp = client.delete(f"/usuarios/{usuario_id}/agendamentos/recorrencia/{recorrencia_id}")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == agendamentos_cancelados
+        cancel_recurrence_mock.assert_called_once_with(conn, usuario_id, recorrencia_id)
+        invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
+
+    def test_retorna_lista_vazia_sem_recorrencia(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        recorrencia_id = 999
+        _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
+
+        cancel_recurrence_mock = mocker.patch(
+            "src.routes.agendamentos.q.cancel_recurrence",
+            return_value=[],
+        )
+        invalidate_prefix_mock = mocker.patch("src.routes.agendamentos.cache_invalidate_prefix")
+
+        resp = client.delete(f"/usuarios/{usuario_id}/agendamentos/recorrencia/{recorrencia_id}")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == []
+        cancel_recurrence_mock.assert_called_once_with(conn, usuario_id, recorrencia_id)
+        invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
+
+    def test_invalida_cache_apos_cancelamento_recorrencia(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        recorrencia_id = 42
+        agendamentos_cancelados = [
+            {
+                "nome_compromisso": "Reunião mensal",
+                "data_compromisso": (date.today() + timedelta(days=7)).isoformat(),
+                "hora_compromisso": "14:00",
+            },
+        ]
+        mock_db_conn("src.routes.agendamentos.get_db_conn")
+        mocker.patch("src.routes.agendamentos.q.cancel_recurrence", return_value=agendamentos_cancelados)
+        invalidate_prefix_mock = mocker.patch("src.routes.agendamentos.cache_invalidate_prefix")
+
+        resp = client.delete(f"/usuarios/{usuario_id}/agendamentos/recorrencia/{recorrencia_id}")
+
+        assert resp.status_code == 200
+        invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
+
+
+class TestCreateRecurrence:
+    def test_cria_agendamentos_recorrentes_semanais(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        data_inicio = (date.today() + timedelta(days=1)).isoformat()
+        payload = {
+            "nome_compromisso": "Reunião semanal",
+            "data_inicio": data_inicio,
+            "hora_compromisso": "10:00",
+            "frequencia": "semanal",
+            "dia_semana_ou_mes": "seg",
+            "quantidade_meses": 1,
+        }
+        agendamentos_fake = [
+            {
+                "id": 100,
+                "nome_compromisso": "Reunião semanal",
+                "data_compromisso": data_inicio,
+                "hora_compromisso": "10:00",
+                "status": "confirmado",
+                "recorrencia_id": "uuid-123",
+            },
+            {
+                "id": 101,
+                "nome_compromisso": "Reunião semanal",
+                "data_compromisso": (date.today() + timedelta(days=8)).isoformat(),
+                "hora_compromisso": "10:00",
+                "status": "confirmado",
+                "recorrencia_id": "uuid-123",
+            },
+        ]
+        _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
+
+        create_recurrence_mock = mocker.patch(
+            "src.routes.agendamentos.q.create_recurrence",
+            return_value=agendamentos_fake,
+        )
+        invalidate_prefix_mock = mocker.patch("src.routes.agendamentos.cache_invalidate_prefix")
+
+        resp = client.post(f"/usuarios/{usuario_id}/agendamentos/recorrentes", json=payload)
+
+        assert resp.status_code == 201
+        assert resp.get_json() == agendamentos_fake
+        create_recurrence_mock.assert_called_once()
+        invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
+
+    def test_retorna_400_sem_campos_obrigatorios(self, client):
+        usuario_id = 1
+        resp = client.post(f"/usuarios/{usuario_id}/agendamentos/recorrentes", json={})
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["error"] == "bad_request"
+
+    def test_retorna_400_frequencia_invalida(self, client):
+        usuario_id = 1
+        data_inicio = (date.today() + timedelta(days=1)).isoformat()
+        payload = {
+            "nome_compromisso": "Reunião",
+            "data_inicio": data_inicio,
+            "hora_compromisso": "10:00",
+            "frequencia": "diaria",
+            "dia_semana_ou_mes": "seg",
+            "quantidade_meses": 1,
+        }
+
+        resp = client.post(f"/usuarios/{usuario_id}/agendamentos/recorrentes", json=payload)
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert "frequencia" in data["detail"].lower()
+
+    def test_retorna_400_quantidade_meses_invalida(self, client):
+        usuario_id = 1
+        data_inicio = (date.today() + timedelta(days=1)).isoformat()
+        payload = {
+            "nome_compromisso": "Reunião",
+            "data_inicio": data_inicio,
+            "hora_compromisso": "10:00",
+            "frequencia": "semanal",
+            "dia_semana_ou_mes": "seg",
+            "quantidade_meses": 13,
+        }
+
+        resp = client.post(f"/usuarios/{usuario_id}/agendamentos/recorrentes", json=payload)
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert "quantidade_meses" in data["detail"].lower()
+
+    def test_cria_agendamentos_recorrentes_mensais(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        data_inicio = (date.today() + timedelta(days=1)).isoformat()
+        payload = {
+            "nome_compromisso": "Reunião mensal",
+            "data_inicio": data_inicio,
+            "hora_compromisso": "15:00",
+            "frequencia": "mensal",
+            "dia_semana_ou_mes": "15",
+            "quantidade_meses": 3,
+        }
+        agendamentos_fake = [
+            {
+                "id": 200,
+                "nome_compromisso": "Reunião mensal",
+                "data_compromisso": data_inicio,
+                "hora_compromisso": "15:00",
+                "status": "confirmado",
+                "recorrencia_id": "uuid-456",
+            },
+        ]
+        _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
+
+        create_recurrence_mock = mocker.patch(
+            "src.routes.agendamentos.q.create_recurrence",
+            return_value=agendamentos_fake,
+        )
+        invalidate_prefix_mock = mocker.patch("src.routes.agendamentos.cache_invalidate_prefix")
+
+        resp = client.post(f"/usuarios/{usuario_id}/agendamentos/recorrentes", json=payload)
+
+        assert resp.status_code == 201
+        assert resp.get_json() == agendamentos_fake
+        create_recurrence_mock.assert_called_once()
+        invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
+
+    def test_retorna_400_dia_semana_invalido(self, client):
+        usuario_id = 1
+        data_inicio = (date.today() + timedelta(days=1)).isoformat()
+        payload = {
+            "nome_compromisso": "Reunião",
+            "data_inicio": data_inicio,
+            "hora_compromisso": "10:00",
+            "frequencia": "semanal",
+            "dia_semana_ou_mes": "seg2",
+            "quantidade_meses": 1,
+        }
+
+        resp = client.post(f"/usuarios/{usuario_id}/agendamentos/recorrentes", json=payload)
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert "dia_semana" in data["detail"].lower() or "inválid" in data["detail"].lower()
+
+    def test_retorna_400_data_inicio_no_passado(self, client):
+        usuario_id = 1
+        data_passada = (date.today() - timedelta(days=1)).isoformat()
+        payload = {
+            "nome_compromisso": "Reunião",
+            "data_inicio": data_passada,
+            "hora_compromisso": "10:00",
+            "frequencia": "semanal",
+            "dia_semana_ou_mes": "seg",
+            "quantidade_meses": 1,
+        }
+
+        resp = client.post(f"/usuarios/{usuario_id}/agendamentos/recorrentes", json=payload)
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert "passado" in data["detail"].lower()
+
+    def test_invalida_cache_apos_criacao_recorrencia(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        data_inicio = (date.today() + timedelta(days=1)).isoformat()
+        payload = {
+            "nome_compromisso": "Reunião",
+            "data_inicio": data_inicio,
+            "hora_compromisso": "10:00",
+            "frequencia": "semanal",
+            "dia_semana_ou_mes": "seg",
+            "quantidade_meses": 1,
+        }
+        mock_db_conn("src.routes.agendamentos.get_db_conn")
+        mocker.patch("src.routes.agendamentos.q.create_recurrence", return_value=[])
+        invalidate_prefix_mock = mocker.patch("src.routes.agendamentos.cache_invalidate_prefix")
+
+        resp = client.post(f"/usuarios/{usuario_id}/agendamentos/recorrentes", json=payload)
+
+        assert resp.status_code == 201
+        invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
