@@ -248,6 +248,41 @@ def validate_update_agendamento_payload(body: dict) -> dict:
     
     return resultado
 
+def validate_conflict_check_params(data: str, hora: str, nome_compromisso: str) -> tuple[date, str, str]:
+    """Valida os query params para verificação de conflito de agendamento."""
+    # Validar se os parâmetros foram fornecidos
+    if not all([data, hora, nome_compromisso]):
+        abort(400, description="Parâmetros 'data', 'hora' e 'nome_compromisso' são obrigatórios")
+    
+    tz = ZoneInfo("America/Sao_Paulo")
+
+    # Validar data
+    try:
+        data_obj = date.fromisoformat(data.strip())
+    except (TypeError, ValueError, AttributeError):
+        abort(400, description="parâmetro 'data' deve estar no formato YYYY-MM-DD")
+
+    agora = datetime.now(tz)
+    hoje = agora.date()
+
+    if data_obj < hoje:
+        abort(400, description="não é permitido verificar conflito para data no passado")
+
+    # Validar hora
+    try:
+        hora_obj = datetime.strptime(hora.strip(), "%H:%M").time()
+    except (TypeError, ValueError, AttributeError):
+        abort(400, description="parâmetro 'hora' deve estar no formato HH:MM")
+
+    if data_obj == hoje and hora_obj <= agora.time():
+        abort(400, description="não é permitido verificar conflito para horário no passado")
+
+    # Validar nome_compromisso
+    nome_compromisso_str = str(nome_compromisso or "").strip()
+    if not nome_compromisso_str:
+        abort(400, description="parâmetro 'nome_compromisso' não pode estar vazio")
+
+    return data_obj, hora.strip(), nome_compromisso_str
 
 def validate_recurrence_payload(body: dict) -> dict:
     """Valida o corpo da requisição de criação de agendamento recorrente."""
