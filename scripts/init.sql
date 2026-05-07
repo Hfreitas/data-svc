@@ -76,7 +76,7 @@ CREATE TABLE public.agendamentos (
   data_compromisso  date,
   hora_compromisso  time,
   status            text          DEFAULT 'pendente'
-                    CHECK (status IN ('pendente', 'confirmado', 'agendado')),
+                    CHECK (status IN ('pendente', 'confirmado', 'agendado', 'cancelado')),
   lembrete_enviado  boolean       DEFAULT false,  -- atualizado pelo workflow Lembretes automaticos
   data_lembrete     timestamp,
   tipo_agendamento  varchar(20)   DEFAULT 'unico',

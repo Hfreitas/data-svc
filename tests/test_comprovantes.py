@@ -1,10 +1,12 @@
+from datetime import date, timedelta
+
 from src.config import Config
 
 
 class TestGetSaldo:
     def test_retorna_saldo_do_mes(self, client, mock_db_conn, mocker):
         usuario_id = 1
-        mes = "2026-03"
+        mes = date.today().strftime("%Y-%m")
         saldo_fake = {
             "total_vendas": 300.0,
             "total_gastos": 120.0,
@@ -48,7 +50,7 @@ class TestGetSaldo:
 class TestListComprovantes:
     def test_lista_todos_com_modo_relatorio(self, client, mock_db_conn, mocker):
         usuario_id = 1
-        mes = "2026-03"
+        mes = date.today().strftime("%Y-%m")
         modo = "relatorio"
         comprovantes_fake = [
             {"id": 1, "operacao": "venda", "item": "Produto A", "valor_total": 100.0},
@@ -74,7 +76,7 @@ class TestListComprovantes:
 
     def test_filtra_apenas_gastos(self, client, mock_db_conn, mocker):
         usuario_id = 1
-        mes = "2026-03"
+        mes = date.today().strftime("%Y-%m")
         _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
 
         mocker.patch("src.routes.comprovantes.cache_get", return_value=None)
@@ -89,7 +91,7 @@ class TestListComprovantes:
 
     def test_filtra_apenas_vendas(self, client, mock_db_conn, mocker):
         usuario_id = 1
-        mes = "2026-03"
+        mes = date.today().strftime("%Y-%m")
         _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
 
         mocker.patch("src.routes.comprovantes.cache_get", return_value=None)
@@ -106,6 +108,8 @@ class TestListComprovantes:
 class TestCreateComprovante:
     def test_insere_novo_comprovante(self, client, mock_db_conn, mocker):
         usuario_id = 1
+        data_venda = (date.today() - timedelta(days=2)).isoformat()
+
         payload = {
             "operacao": "venda",
             "item": "Produto A",
@@ -113,14 +117,14 @@ class TestCreateComprovante:
             "quantidade": "2",
             "valor_unitario": "50.00",
             "valor_total": "100.00",
-            "data_venda": "2026-03-10",
+            "data_venda": data_venda,
         }
         comprovante_fake = {
             "id": 10,
             "operacao": "venda",
             "item": "Produto A",
             "valor_total": 100.0,
-            "data_venda": "2026-03-10",
+            "data_venda": data_venda,
             "data_compra": None,
         }
         _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
@@ -144,6 +148,8 @@ class TestCreateComprovante:
 
     def test_atualiza_comprovante_existente_por_item_hash(self, client, mock_db_conn, mocker):
         usuario_id = 1
+        data_venda = (date.today() - timedelta(days=2)).isoformat()
+
         payload = {
             "operacao": "vendas",
             "item": "Produto A",
@@ -151,14 +157,14 @@ class TestCreateComprovante:
             "quantidade": "2",
             "valor_unitario": "50.00",
             "valor_total": "100.00",
-            "data_venda": "2026-03-10",
+            "data_venda": data_venda,
         }
         retorno_primeiro = {
             "id": 10,
             "operacao": "venda",
             "item": "Produto A",
             "valor_total": 100.0,
-            "data_venda": "2026-03-10",
+            "data_venda": data_venda,
             "data_compra": None,
         }
         retorno_segundo = {
@@ -166,7 +172,7 @@ class TestCreateComprovante:
             "operacao": "venda",
             "item": "Produto A",
             "valor_total": 120.0,
-            "data_venda": "2026-03-10",
+            "data_venda": data_venda,
             "data_compra": None,
         }
 
@@ -192,6 +198,8 @@ class TestCreateComprovante:
 
     def test_invalida_cache_saldo_e_comprovantes(self, client, mock_db_conn, mocker):
         usuario_id = 1
+        data_compra = (date.today() - timedelta(days=1)).isoformat()
+
         payload = {
             "operacao": "gasto",
             "item": "Insumo B",
@@ -199,14 +207,14 @@ class TestCreateComprovante:
             "quantidade": "1",
             "valor_unitario": "80.00",
             "valor_total": "80.00",
-            "data_compra": "2026-03-11",
+            "data_compra": data_compra,
         }
         comprovante_fake = {
             "id": 11,
             "operacao": "gasto",
             "item": "Insumo B",
             "valor_total": 80.0,
-            "data_compra": "2026-03-11",
+            "data_compra": data_compra,
             "data_venda": None,
         }
 
