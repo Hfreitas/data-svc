@@ -21,14 +21,16 @@ _OPERACAO_ALIASES: Final[dict[str, str]] = {
     "venda": "venda",
 }
 
-_SEMANA_ALIASES: Final[dict[str, str]] = {
-    "atual": "atual"
+
+_SCOPE_AGENDAMENTO_ALIASES: Final[dict[str, str]] = {
+    "future": "future"
 }
 
 _STATUS_AGENDAMENTO: Final[set[str]] = {
     "pendente",
     "confirmado",
-    "agendado"
+    "agendado",
+    "cancelado"
 }
 
 _TIPOS_CONTA_RECORRENTE: Final[set[str]] = {
@@ -121,14 +123,14 @@ def validate_comprovante_payload(body: dict) -> dict:
     return body
 
 
-def validate_semana_agendamento(semana: str) -> str:
-    """Valida se a semana informada em agendamentos é correta"""
-    raw = (semana or "").strip().lower()
-    normalizado = _SEMANA_ALIASES.get(raw)
+def validate_scope_agendamento(scope: str) -> str:
+    """Valida se o escopo informado em agendamentos é correto"""
+    raw = (scope or "").strip().lower()
+    normalizado = _SCOPE_AGENDAMENTO_ALIASES.get(raw)
 
     if normalizado is None:
-        permitidos = ", ".join(sorted(_SEMANA_ALIASES.keys()))
-        abort(400, description=f"parâmetro 'semana' inválido. Use: {permitidos}")
+        permitidos = ", ".join(sorted(_SCOPE_AGENDAMENTO_ALIASES.keys()))
+        abort(400, description=f"parâmetro 'scope' inválido. Use: {permitidos}")
 
     return normalizado
 
@@ -181,6 +183,70 @@ def validate_status_agendamento(status: str) -> str:
         abort(400, description=f"o campo 'status' está inválido. Use: {permitidos}")
         
     return status
+
+
+def validate_update_agendamento_payload(body: dict) -> dict:
+    """Valida o corpo da requisição de atualização de um agendamento
+    
+    Aceita campos opcionais: nome_compromisso, data_compromisso, hora_compromisso, status
+    Pelo menos um campo deve ser fornecido.
+    """
+    if not body:
+        abort(400, description="body não pode estar vazio")
+    
+    campos_validos = {"nome_compromisso", "data_compromisso", "hora_compromisso", "status"}
+    campos_fornecidos = set(body.keys())
+    
+    if not campos_fornecidos.intersection(campos_validos):
+        abort(400, description=f"pelo menos um campo deve ser fornecido: {', '.join(sorted(campos_validos))}")
+    
+    resultado = {}
+    tz = ZoneInfo("America/Sao_Paulo")
+    
+    # Validar e processar nome_compromisso
+    if "nome_compromisso" in body:
+        nome_compromisso = str(body.get("nome_compromisso", "")).strip()
+        if nome_compromisso and nome_compromisso != body.get("nome_compromisso"):
+            abort(400, description="o campo 'nome_compromisso' não deve ser vazio ou apenas espaços")
+        if nome_compromisso:
+            resultado["nome_compromisso"] = nome_compromisso
+    
+    # Validar e processar data_compromisso
+    if "data_compromisso" in body:
+        try:
+            data_compromisso = date.fromisoformat(str(body.get("data_compromisso", "")).strip())
+        except (TypeError, ValueError):
+            abort(400, description="o campo 'data_compromisso' deve estar no formato YYYY-MM-DD")
+        
+        agora = datetime.now(tz)
+        hoje = agora.date()
+        
+        if data_compromisso < hoje:
+            abort(400, description="não é permitido agendar uma data no passado")
+        
+        resultado["data_compromisso"] = data_compromisso.isoformat()
+    
+    # Validar e processar hora_compromisso
+    if "hora_compromisso" in body:
+        try:
+            hora_compromisso = datetime.strptime(str(body.get("hora_compromisso", "")).strip(), "%H:%M").time()
+        except (TypeError, ValueError):
+            abort(400, description="o campo 'hora_compromisso' deve estar no formato HH:MM")
+        if "data_compromisso" in resultado:
+            agora = datetime.now(tz)
+            nova_data = date.fromisoformat(resultado["data_compromisso"])
+            if nova_data == agora.date() and hora_compromisso <= agora.time():
+                abort(400, description="não é permitido agendar um horário no passado")
+        
+        resultado["hora_compromisso"] = hora_compromisso.strftime("%H:%M")
+    
+    # Validar e processar status
+    if "status" in body:
+        status = str(body.get("status", "")).strip().lower()
+        validate_status_agendamento(status)
+        resultado["status"] = status
+    
+    return resultado
 
 
 def validate_conta_recorrente_payload(body: dict) -> dict:

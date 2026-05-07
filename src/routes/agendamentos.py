@@ -1,11 +1,9 @@
-from datetime import date
-
 from flask import Blueprint, request
 
 from src.db import get_db_conn
 from src.cache import cache_get, cache_invalidate_prefix, cache_set
 from src.config import Config
-from src.utils.validators import validate_status_agendamento, validate_agendamento_payload, validate_semana_agendamento
+from src.utils.validators import validate_agendamento_payload, validate_scope_agendamento, validate_update_agendamento_payload
 import src.queries.agendamentos as q
 from src.utils.api_response import fail, ok
 
@@ -14,19 +12,18 @@ agendamentos_bp = Blueprint("agendamentos", __name__)
 
 @agendamentos_bp.route("/usuarios/<int:usuario_id>/agendamentos", methods=["GET"])
 def list_agendamentos(usuario_id: int):
-    validate_semana_agendamento(request.args.get("semana"))
-    iso = date.today().isocalendar()
-    semana_iso = f"{iso.year}-W{iso.week:02d}"
-    
-    agendamentos = cache_get("agendamentos", f"{usuario_id}:{semana_iso}")
+    scope = validate_scope_agendamento(request.args.get("scope"))
+
+    cache_key = f"{usuario_id}:{scope}"
+    agendamentos = cache_get("agendamentos", cache_key)
     if agendamentos:
-        return ok(200, agendamentos) 
-    
+        return ok(200, agendamentos)
+
     with get_db_conn() as conn:
-        agendamentos = q.list_semana(conn, usuario_id)
-        
-        cache_set("agendamentos", f"{usuario_id}:{semana_iso}", agendamentos, Config.CACHE_TTL_AGENDAMENTOS)
-        
+        agendamentos = q.list_agendamentos(conn, usuario_id)
+
+        cache_set("agendamentos", cache_key, agendamentos, Config.CACHE_TTL_AGENDAMENTOS)
+
         return ok(200, agendamentos)
 
 
@@ -54,10 +51,10 @@ def update_agendamento(usuario_id: int, agendamento_id: int):
     if not isinstance(body, dict):
         return fail("body_invalido", "JSON inválido ou ausente", 400)
     
-    status = validate_status_agendamento(body.get("status"))
+    validated_data = validate_update_agendamento_payload(body)
     
     with get_db_conn() as conn:
-        agendamento = q.update_status(conn, agendamento_id, usuario_id, status)
+        agendamento = q.update(conn, agendamento_id, usuario_id, validated_data)
         
         if agendamento is None:
             return fail("agendamento_nao_encontrado", f"o agendamento com id {agendamento_id} para o usuário informado não foi encontrado", status_code=404)
@@ -65,3 +62,13 @@ def update_agendamento(usuario_id: int, agendamento_id: int):
         cache_invalidate_prefix("agendamentos", f"{usuario_id}:")
         
         return ok(200, agendamento)
+
+
+@agendamentos_bp.route("/usuarios/<int:usuario_id>/agendamentos", methods=["DELETE"])
+def cancel_all_agendamentos(usuario_id: int):
+    with get_db_conn() as conn:
+        agendamentos_cancelados = q.cancel_all(conn, usuario_id)
+        
+        cache_invalidate_prefix("agendamentos", f"{usuario_id}:")
+        
+        return ok(200, agendamentos_cancelados)
