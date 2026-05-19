@@ -303,14 +303,14 @@ def validate_recurrence_payload(body: dict) -> dict:
     if quantidade_meses < 1 or quantidade_meses > 12:
         abort(400, description="o campo 'quantidade_meses' deve estar entre 1 e 12")
 
-    body["nome_compromisso"] = nome_compromisso
-    body["data_inicio"] = data_inicio
-    body["hora_compromisso"] = hora_compromisso.strftime("%H:%M")
-    body["frequencia"] = frequencia
-    body["dia_semana_ou_mes"] = dia_semana_ou_mes
-    body["quantidade_meses"] = quantidade_meses
-
-    return body
+    return {
+        "nome_compromisso": nome_compromisso,
+        "data_inicio": data_inicio,
+        "hora_compromisso": hora_compromisso.strftime("%H:%M"),
+        "frequencia": frequencia,
+        "dia_semana_ou_mes": dia_semana_ou_mes,
+        "quantidade_meses": quantidade_meses,
+    }
 
 
 def validate_conta_recorrente_payload(body: dict) -> dict:

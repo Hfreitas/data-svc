@@ -380,7 +380,7 @@ class TestCancelAllAgendamentos:
 class TestCancelRecurrence:
     def test_cancela_agendamentos_recorrentes(self, client, mock_db_conn, mocker):
         usuario_id = 1
-        recorrencia_id = 42
+        recorrencia_id = "42"
         data_futura = (date.today() + timedelta(days=5)).isoformat()
         agendamentos_cancelados = [
             {
@@ -411,7 +411,7 @@ class TestCancelRecurrence:
 
     def test_retorna_lista_vazia_sem_recorrencia(self, client, mock_db_conn, mocker):
         usuario_id = 1
-        recorrencia_id = 999
+        recorrencia_id = "999"
         _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
 
         cancel_recurrence_mock = mocker.patch(
@@ -422,14 +422,13 @@ class TestCancelRecurrence:
 
         resp = client.delete(f"/usuarios/{usuario_id}/agendamentos/recorrencia/{recorrencia_id}")
 
-        assert resp.status_code == 200
-        assert resp.get_json() == []
+        assert resp.status_code == 404
         cancel_recurrence_mock.assert_called_once_with(conn, usuario_id, recorrencia_id)
-        invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
+        invalidate_prefix_mock.assert_not_called()
 
     def test_invalida_cache_apos_cancelamento_recorrencia(self, client, mock_db_conn, mocker):
         usuario_id = 1
-        recorrencia_id = 42
+        recorrencia_id = "42"
         agendamentos_cancelados = [
             {
                 "nome_compromisso": "Reunião mensal",
