@@ -15,9 +15,6 @@ _WEEKDAY_MAP: Final[dict[str, int]] = {
     "dom": 6,
 }
 
-# Inverso para referência
-_WEEKDAY_REVERSE: Final[dict[int, str]] = {v: k for k, v in _WEEKDAY_MAP.items()}
-
 
 def generate_recurrence_dates(
     data_inicio: date,
