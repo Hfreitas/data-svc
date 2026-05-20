@@ -2,6 +2,7 @@
 Queries de agendamentos — funções puras que recebem conn + parâmetros e retornam rows.
 """
 from psycopg2.extras import RealDictCursor
+import uuid
 
 
 def list_agendamentos(conn, usuario_id: int) -> list[dict]:
@@ -111,5 +112,58 @@ def cancel_all(conn, usuario_id: int) -> list[dict]:
     
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
         cursor.execute(sql, {"usuario_id": usuario_id})
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def cancel_recurrence(conn, usuario_id: int, recorrencia_id: str) -> list[dict]:
+    """Cancela todos os agendamentos de uma série recorrente e retorna os itens afetados."""
+    sql = """
+        UPDATE public.agendamentos
+        SET status = 'cancelado', data_modificacao = NOW()
+        WHERE usuario_id = %(usuario_id)s
+            AND recorrencia_id = %(recorrencia_id)s
+            AND status IN ('pendente', 'confirmado', 'agendado')
+        RETURNING nome_compromisso, data_compromisso, TO_CHAR(hora_compromisso, 'HH24:MI') AS hora_compromisso;
+    """
+    
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"usuario_id": usuario_id, "recorrencia_id": recorrencia_id})
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def create_recurrence(conn, usuario_id: int, nome_compromisso: str, datas: list, hora_compromisso: str) -> list[dict]:
+    """Cria múltiplos agendamentos em série com o mesmo recorrencia_id em uma única transação."""
+    if not datas:
+        return []
+    
+    recorrencia_id = str(uuid.uuid4())
+    
+    # Construir INSERT com múltiplos VALUES
+    placeholders = []
+    params = {
+        "usuario_id": usuario_id,
+        "nome_compromisso": nome_compromisso,
+        "hora_compromisso": hora_compromisso,
+        "recorrencia_id": recorrencia_id,
+        "status": "confirmado",
+    }
+    
+    # Adicionar cada data como parâmetro
+    for i, data_compromisso in enumerate(datas):
+        params[f"data_{i}"] = data_compromisso
+        placeholders.append(f"(%(usuario_id)s, %(nome_compromisso)s, %(data_{i})s::date, %(hora_compromisso)s::time, %(status)s, %(recorrencia_id)s, NOW(), NOW())")
+    
+    sql = f"""
+        INSERT INTO public.agendamentos (
+            usuario_id, nome_compromisso, data_compromisso,
+            hora_compromisso, status, recorrencia_id, data_criacao, data_modificacao)
+        VALUES {', '.join(placeholders)}
+        RETURNING id, nome_compromisso, data_compromisso, TO_CHAR(hora_compromisso, 'HH24:MI') AS hora_compromisso, status, recorrencia_id;
+    """
+    
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, params)
         rows = cursor.fetchall()
         return [dict(row) for row in rows]

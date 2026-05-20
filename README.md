@@ -9,7 +9,7 @@ Depois: N8N ──→ data-svc (Flask) ──→ Supabase
                    cache em memória
 ```
 
-**Stack:** Python 3.12 · Flask · psycopg2 · cachetools · Gunicorn
+**Stack:** Python 3.12 · Flask · psycopg2 · cachetools · Gunicorn · OpenAI SDK
 
 ---
 

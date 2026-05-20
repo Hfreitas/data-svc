@@ -13,7 +13,8 @@ def find_by_telefone(conn, telefone: str) -> dict | None:
             tipo_negocio, descricao_negocio, descricao_objetivo,
             area_ajuda, preco_referencia,
             dias_trabalho, horario_inicio, horario_fim,
-            data_primeiro_contato, data_ultimo_contato
+            data_primeiro_contato, data_ultimo_contato,
+            versao_agente
         FROM public.usuarios
         WHERE numero_telefone = %(telefone)s
         LIMIT 1;
@@ -78,6 +79,7 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
             dias_trabalho       = COALESCE(%(dias_trabalho)s, dias_trabalho),
             horario_inicio      = COALESCE(%(horario_inicio)s, horario_inicio),
             horario_fim         = COALESCE(%(horario_fim)s, horario_fim),
+            versao_agente       = COALESCE(%(versao_agente)s, versao_agente),
             data_ultimo_contato = NOW()
         WHERE id = %(id)s
         RETURNING *;
@@ -97,6 +99,7 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
         "dias_trabalho": None,
         "horario_inicio": None,
         "horario_fim": None,
+        "versao_agente": None,
     }
     params.update(fields)
 
