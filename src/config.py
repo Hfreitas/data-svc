@@ -18,6 +18,7 @@ class Config:
     CACHE_TTL_AGENDAMENTOS: int = int(os.getenv("CACHE_TTL_AGENDAMENTOS", 120))
     CACHE_TTL_LISTAS: int = int(os.getenv("CACHE_TTL_LISTAS", 300))
     CACHE_TTL_FEEDBACKS: int = int(os.getenv("CACHE_TTL_FEEDBACKS", 300))
+    CACHE_TTL_CONTEXTO_BUSINESS: int = int(os.getenv("CACHE_TTL_CONTEXTO_BUSINESS", 60))
 
     OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
     OPENAI_BASE_URL: str = os.environ.get("OPENAI_BASE_URL", "")

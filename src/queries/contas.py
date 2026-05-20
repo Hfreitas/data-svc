@@ -6,6 +6,18 @@ from psycopg2.extras import RealDictCursor
 TIPOS_VALIDOS = {"aluguel", "internet", "luz", "agua", "boleto"}
 
 
+def list_by_usuario(conn, usuario_id: int) -> list:
+    sql = """
+        SELECT id, tipo, descricao, valor, dia_vencimento, lembrete_ativo, ativo, created_at
+        FROM public.contas_recorrentes
+        WHERE usuario_id = %(usuario_id)s AND ativo = true
+        ORDER BY tipo, descricao;
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, {"usuario_id": usuario_id})
+        return [dict(r) for r in cur.fetchall()]
+
+
 def upsert(conn, usuario_id: int, data: dict) -> dict:
     params = {
         "usuario_id": usuario_id,

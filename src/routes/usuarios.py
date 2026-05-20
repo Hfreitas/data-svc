@@ -58,7 +58,7 @@ def update_usuario(usuario_id: int):
         "tipo_negocio", "descricao_negocio", "descricao_objetivo",
         "area_ajuda", "preco_referencia", "dias_trabalho",
         "horario_inicio", "horario_fim", "data_ultimo_contato",
-        "versao_agente"
+        "versao_agente", "confirmacao_lembretes", "ultimo_relatorio"
     }
     
     fields_to_update = {
