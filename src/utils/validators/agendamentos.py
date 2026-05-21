@@ -1,5 +1,6 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Final
+from zoneinfo import ZoneInfo
 
 from flask import abort
 
@@ -178,27 +179,26 @@ def validate_conflict_check_params(data: str, hora: str, nome_compromisso: str) 
 
 
 def validate_recurrence_payload(body: dict) -> dict:
-    """Valida o corpo da requisicao de criacao de agendamento recorrente."""
+    """Valida o corpo da requisição de criação de agendamento recorrente."""
     require_fields(body, "nome_compromisso", "data_inicio", "hora_compromisso", "frequencia", "dia_semana_ou_mes", "quantidade_meses")
 
-    nome_compromisso = normalize_non_empty_text(
-        body.get("nome_compromisso", ""),
-        "nome_compromisso",
-        "o campo 'nome_compromisso' não deve ser vazio",
-    )
+    nome_compromisso = str(body.get("nome_compromisso", "")).strip()
+    if not nome_compromisso:
+        abort(400, description="o campo 'nome_compromisso' não deve ser vazio")
 
-    data_inicio = parse_iso_date(
-        body.get("data_inicio", ""),
-        "data_inicio",
-        "o campo 'data_inicio' deve estar no formato YYYY-MM-DD",
-    )
-    hora_compromisso = parse_hhmm_time(
-        body.get("hora_compromisso", ""),
-        "hora_compromisso",
-        "o campo 'hora_compromisso' deve estar no formato HH:MM",
-    )
+    tz = ZoneInfo("America/Sao_Paulo")
 
-    agora = now_time_zone()
+    try:
+        data_inicio = date.fromisoformat(str(body.get("data_inicio", "")).strip())
+    except (TypeError, ValueError):
+        abort(400, description="o campo 'data_inicio' deve estar no formato YYYY-MM-DD")
+
+    try:
+        hora_compromisso = datetime.strptime(str(body.get("hora_compromisso", "")).strip(), "%H:%M").time()
+    except (TypeError, ValueError):
+        abort(400, description="o campo 'hora_compromisso' deve estar no formato HH:MM")
+
+    agora = datetime.now(tz)
     hoje = agora.date()
 
     if data_inicio < hoje:
@@ -216,7 +216,7 @@ def validate_recurrence_payload(body: dict) -> dict:
         dias_validos = {"seg", "ter", "qua", "qui", "sex", "sab", "dom"}
         if dia_semana_ou_mes not in dias_validos:
             abort(400, description=f"para frequência '{frequencia}', 'dia_semana_ou_mes' deve ser um dia da semana: {', '.join(sorted(dias_validos))}")
-    else:
+    else:  # mensal
         try:
             dia_mes = int(dia_semana_ou_mes)
             if dia_mes < 1 or dia_mes > 31:
@@ -232,11 +232,11 @@ def validate_recurrence_payload(body: dict) -> dict:
     if quantidade_meses < 1 or quantidade_meses > 12:
         abort(400, description="o campo 'quantidade_meses' deve estar entre 1 e 12")
 
-    body["nome_compromisso"] = nome_compromisso
-    body["data_inicio"] = data_inicio
-    body["hora_compromisso"] = hora_compromisso.strftime("%H:%M")
-    body["frequencia"] = frequencia
-    body["dia_semana_ou_mes"] = dia_semana_ou_mes
-    body["quantidade_meses"] = quantidade_meses
-
-    return body
+    return {
+        "nome_compromisso": nome_compromisso,
+        "data_inicio": data_inicio,
+        "hora_compromisso": hora_compromisso.strftime("%H:%M"),
+        "frequencia": frequencia,
+        "dia_semana_ou_mes": dia_semana_ou_mes,
+        "quantidade_meses": quantidade_meses,
+    }
