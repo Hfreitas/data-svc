@@ -116,7 +116,7 @@ def cancel_all(conn, usuario_id: int) -> list[dict]:
         return [dict(row) for row in rows]
 
 
-def cancel_recurrence(conn, usuario_id: int, recorrencia_id: int) -> list[dict]:
+def cancel_recurrence(conn, usuario_id: int, recorrencia_id: str) -> list[dict]:
     """Cancela todos os agendamentos de uma série recorrente e retorna os itens afetados."""
     sql = """
         UPDATE public.agendamentos

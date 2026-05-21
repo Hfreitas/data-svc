@@ -9,6 +9,9 @@ from src.routes.comprovantes import comprovantes_bp
 from src.routes.agendamentos import agendamentos_bp
 from src.routes.listas import listas_bp
 from src.routes.contas import contas_bp
+from src.routes.agente import agente_bp
+from src.routes.memoria import memoria_bp
+from src.routes.rag import rag_bp
 
 
 def create_app() -> Flask:
@@ -31,5 +34,8 @@ def create_app() -> Flask:
     app.register_blueprint(agendamentos_bp)
     app.register_blueprint(listas_bp)
     app.register_blueprint(contas_bp)
+    app.register_blueprint(agente_bp)
+    app.register_blueprint(memoria_bp)
+    app.register_blueprint(rag_bp)
 
     return app
