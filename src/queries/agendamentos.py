@@ -167,3 +167,37 @@ def create_recurrence(conn, usuario_id: int, nome_compromisso: str, datas: list,
         cursor.execute(sql, params)
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+def check_conflicts(conn, usuario_id: int, data_compromisso, hora_compromisso: str, nome_compromisso: str) -> dict:
+    """Verifica se há conflito de horário para um agendamento."""
+    sql = """
+        SELECT 
+            COUNT(*) as total,
+            STRING_AGG(nome_compromisso || ' às ' || TO_CHAR(hora_compromisso, 'HH24:MI'), ', ') as descricao
+        FROM public.agendamentos
+        WHERE usuario_id = %(usuario_id)s
+            AND nome_compromisso ILIKE %(nome_compromisso)s
+            AND data_compromisso = %(data_compromisso)s::date
+            AND hora_compromisso = %(hora_compromisso)s::time
+            AND status IN ('pendente', 'confirmado', 'agendado');
+    """
+    
+    params = {
+        "usuario_id": usuario_id,
+        "nome_compromisso": f"%{nome_compromisso}%",
+        "data_compromisso": data_compromisso,
+        "hora_compromisso": hora_compromisso,
+    }
+    
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, params)
+        row = cursor.fetchone()
+        total = row["total"]
+        descricao = row["descricao"]
+        
+        return {
+            "conflito": total > 0,
+            "total": total,
+            "descricao": descricao if total > 0 else None,
+        }

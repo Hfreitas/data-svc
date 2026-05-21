@@ -3,7 +3,7 @@ from flask import Blueprint, request
 from src.db import get_db_conn
 from src.cache import cache_get, cache_invalidate_prefix, cache_set
 from src.config import Config
-from src.utils.validators import validate_agendamento_payload, validate_scope_agendamento, validate_update_agendamento_payload, validate_recurrence_payload
+from src.utils.validators import validate_agendamento_payload, validate_scope_agendamento, validate_update_agendamento_payload, validate_recurrence_payload, validate_conflict_check_params
 from src.utils.recurrence_generator import generate_recurrence_dates
 import src.queries.agendamentos as q
 from src.utils.api_response import fail, ok
@@ -26,6 +26,19 @@ def list_agendamentos(usuario_id: int):
         cache_set("agendamentos", cache_key, agendamentos, Config.CACHE_TTL_AGENDAMENTOS)
 
         return ok(200, agendamentos)
+
+
+@agendamentos_bp.route("/usuarios/<int:usuario_id>/agendamentos/conflitos", methods=["GET"])
+def check_conflicts(usuario_id: int):
+    data = request.args.get("data")
+    hora = request.args.get("hora")
+    nome_compromisso = request.args.get("nome_compromisso")
+    
+    data_obj, hora_str, nome_str = validate_conflict_check_params(data, hora, nome_compromisso)
+    
+    with get_db_conn() as conn:
+        resultado = q.check_conflicts(conn, usuario_id, data_obj, hora_str, nome_str)
+        return ok(200, resultado)
 
 
 @agendamentos_bp.route("/usuarios/<int:usuario_id>/agendamentos", methods=["POST"])
