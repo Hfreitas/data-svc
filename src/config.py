@@ -18,6 +18,11 @@ class Config:
     CACHE_TTL_AGENDAMENTOS: int = int(os.getenv("CACHE_TTL_AGENDAMENTOS", 120))
     CACHE_TTL_LISTAS: int = int(os.getenv("CACHE_TTL_LISTAS", 300))
 
+    OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
+    EMBEDDING_MODEL: str = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
+    RAG_MATCH_THRESHOLD: float = float(os.environ.get("RAG_MATCH_THRESHOLD", "0.7"))
+    RAG_MATCH_COUNT: int = int(os.environ.get("RAG_MATCH_COUNT", "5"))
+
     @classmethod
     def validate(cls) -> None:
         if cls.FLASK_ENV == "production" and cls.API_KEY is None:

@@ -116,7 +116,7 @@ def cancel_all(conn, usuario_id: int) -> list[dict]:
         return [dict(row) for row in rows]
 
 
-def cancel_recurrence(conn, usuario_id: int, recorrencia_id: int) -> list[dict]:
+def cancel_recurrence(conn, usuario_id: int, recorrencia_id: str) -> list[dict]:
     """Cancela todos os agendamentos de uma série recorrente e retorna os itens afetados."""
     sql = """
         UPDATE public.agendamentos
@@ -179,6 +179,7 @@ def check_conflicts(conn, usuario_id: int, data_compromisso, hora_compromisso: s
         WHERE usuario_id = %(usuario_id)s
             AND nome_compromisso ILIKE %(nome_compromisso)s
             AND data_compromisso = %(data_compromisso)s::date
+            AND hora_compromisso = %(hora_compromisso)s::time
             AND status IN ('pendente', 'confirmado', 'agendado');
     """
     
@@ -186,17 +187,14 @@ def check_conflicts(conn, usuario_id: int, data_compromisso, hora_compromisso: s
         "usuario_id": usuario_id,
         "nome_compromisso": f"%{nome_compromisso}%",
         "data_compromisso": data_compromisso,
+        "hora_compromisso": hora_compromisso,
     }
     
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
         cursor.execute(sql, params)
         row = cursor.fetchone()
-        
-        if not row:
-            return {"conflito": False, "total": 0, "descricao": None}
-        
-        total = row.get("total", 0)
-        descricao = row.get("descricao")
+        total = row["total"]
+        descricao = row["descricao"]
         
         return {
             "conflito": total > 0,

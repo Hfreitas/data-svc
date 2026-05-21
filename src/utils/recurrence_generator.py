@@ -1,6 +1,7 @@
 """
 Geração de datas para agendamentos recorrentes.
 """
+import calendar
 from datetime import date, timedelta
 from typing import Final
 
@@ -53,7 +54,6 @@ def generate_recurrence_dates(
         end_year += 1
 
     # Data final é o último dia do mês anterior ao que seria quantidade_meses depois
-    import calendar
     try:
         # Tentar usar o mesmo dia da data_inicio
         data_final = date(end_year, end_month, data_inicio.day)
@@ -115,80 +115,6 @@ def generate_recurrence_dates(
             try:
                 current = date(year, month, dia_mes)
             except ValueError:
-                import calendar
-                _, last_day = calendar.monthrange(year, month)
-                current = date(year, month, last_day)
-
-            if current > data_final:
-                break
-
-            datas.append(current)
-
-            # Próximo mês
-            month += 1
-            if month > 12:
-                month = 1
-                year += 1
-
-    return sorted(datas)
-
-    datas = []
-
-    if frequencia == "semanal":
-        # Validar dia da semana
-        if dia_semana_ou_mes not in _WEEKDAY_MAP:
-            raise ValueError(f"dia_semana inválido: {dia_semana_ou_mes}. Esperado: seg, ter, qua, qui, sex, sab, dom")
-
-        target_weekday = _WEEKDAY_MAP[dia_semana_ou_mes]
-        current = data_inicio
-
-        # Avançar para o primeiro dia da semana correto
-        days_ahead = (target_weekday - current.weekday()) % 7
-        if days_ahead == 0 and current != data_inicio:
-            # Se já é o dia correto mas não é a data inicial, começar desse dia
-            pass
-        elif days_ahead > 0:
-            current = current + timedelta(days=days_ahead)
-
-        while current <= data_final:
-            datas.append(current)
-            current = current + timedelta(weeks=1)
-
-    elif frequencia == "quinzenal":
-        # Validar dia da semana
-        if dia_semana_ou_mes not in _WEEKDAY_MAP:
-            raise ValueError(f"dia_semana inválido: {dia_semana_ou_mes}. Esperado: seg, ter, qua, qui, sex, sab, dom")
-
-        target_weekday = _WEEKDAY_MAP[dia_semana_ou_mes]
-        current = data_inicio
-
-        # Avançar para o primeiro dia da semana correto
-        days_ahead = (target_weekday - current.weekday()) % 7
-        if days_ahead > 0:
-            current = current + timedelta(days=days_ahead)
-
-        while current <= data_final:
-            datas.append(current)
-            current = current + timedelta(weeks=2)
-
-    elif frequencia == "mensal":
-        # Validar dia do mês
-        try:
-            dia_mes = int(dia_semana_ou_mes)
-        except ValueError:
-            raise ValueError(f"dia_semana_ou_mes deve ser um número para frequência 'mensal': {dia_semana_ou_mes}")
-
-        if dia_mes < 1 or dia_mes > 31:
-            raise ValueError(f"dia_mes deve estar entre 1 e 31, recebido: {dia_mes}")
-
-        year, month = data_inicio.year, data_inicio.month
-
-        while True:
-            # Tentar usar o dia especificado; se não existir, usar o último dia do mês
-            try:
-                current = date(year, month, dia_mes)
-            except ValueError:
-                import calendar
                 _, last_day = calendar.monthrange(year, month)
                 current = date(year, month, last_day)
 

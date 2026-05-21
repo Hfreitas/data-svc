@@ -128,6 +128,9 @@ def cancel_recurrence(usuario_id: int, recorrencia_id: str):
     with get_db_conn() as conn:
         agendamentos_cancelados = q.cancel_recurrence(conn, usuario_id, recorrencia_id)
         
+        if not agendamentos_cancelados:
+            return fail("recorrencia_nao_encontrada", f"nenhuma recorrência com id {recorrencia_id} foi encontrada", status_code=404)
+        
         cache_invalidate_prefix("agendamentos", f"{usuario_id}:")
         
         return ok(200, agendamentos_cancelados)
