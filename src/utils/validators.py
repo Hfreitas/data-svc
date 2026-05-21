@@ -248,6 +248,169 @@ def validate_update_agendamento_payload(body: dict) -> dict:
     
     return resultado
 
+def validate_conflict_check_params(data: str, hora: str, nome_compromisso: str) -> tuple[date, str, str]:
+    """Valida os query params para verificação de conflito de agendamento."""
+    # Validar se os parâmetros foram fornecidos
+    if not all([data, hora, nome_compromisso]):
+        abort(400, description="Parâmetros 'data', 'hora' e 'nome_compromisso' são obrigatórios")
+    
+    tz = ZoneInfo("America/Sao_Paulo")
+
+    # Validar data
+    try:
+        data_obj = date.fromisoformat(data.strip())
+    except (TypeError, ValueError, AttributeError):
+        abort(400, description="parâmetro 'data' deve estar no formato YYYY-MM-DD")
+
+    agora = datetime.now(tz)
+    hoje = agora.date()
+
+    if data_obj < hoje:
+        abort(400, description="não é permitido verificar conflito para data no passado")
+
+    # Validar hora
+    try:
+        hora_obj = datetime.strptime(hora.strip(), "%H:%M").time()
+    except (TypeError, ValueError, AttributeError):
+        abort(400, description="parâmetro 'hora' deve estar no formato HH:MM")
+
+    if data_obj == hoje and hora_obj <= agora.time():
+        abort(400, description="não é permitido verificar conflito para horário no passado")
+
+    # Validar nome_compromisso
+    nome_compromisso_str = str(nome_compromisso or "").strip()
+    if not nome_compromisso_str:
+        abort(400, description="parâmetro 'nome_compromisso' não pode estar vazio")
+
+    return data_obj, hora.strip(), nome_compromisso_str
+
+def validate_recurrence_payload(body: dict) -> dict:
+    """Valida o corpo da requisição de criação de agendamento recorrente."""
+    require_fields(body, "nome_compromisso", "data_inicio", "hora_compromisso", "frequencia", "dia_semana_ou_mes", "quantidade_meses")
+
+    nome_compromisso = str(body.get("nome_compromisso", "")).strip()
+    if not nome_compromisso:
+        abort(400, description="o campo 'nome_compromisso' não deve ser vazio")
+
+    tz = ZoneInfo("America/Sao_Paulo")
+
+    try:
+        data_inicio = date.fromisoformat(str(body.get("data_inicio", "")).strip())
+    except (TypeError, ValueError):
+        abort(400, description="o campo 'data_inicio' deve estar no formato YYYY-MM-DD")
+
+    try:
+        hora_compromisso = datetime.strptime(str(body.get("hora_compromisso", "")).strip(), "%H:%M").time()
+    except (TypeError, ValueError):
+        abort(400, description="o campo 'hora_compromisso' deve estar no formato HH:MM")
+
+    agora = datetime.now(tz)
+    hoje = agora.date()
+
+    if data_inicio < hoje:
+        abort(400, description="o campo 'data_inicio' não pode estar no passado")
+
+    if data_inicio == hoje and hora_compromisso <= agora.time():
+        abort(400, description="não é permitido agendar um horário no passado")
+
+    frequencia = str(body.get("frequencia", "")).strip().lower()
+    if frequencia not in {"semanal", "quinzenal", "mensal"}:
+        abort(400, description="o campo 'frequencia' deve ser 'semanal', 'quinzenal' ou 'mensal'")
+
+    dia_semana_ou_mes = str(body.get("dia_semana_ou_mes", "")).strip().lower()
+    if frequencia in {"semanal", "quinzenal"}:
+        dias_validos = {"seg", "ter", "qua", "qui", "sex", "sab", "dom"}
+        if dia_semana_ou_mes not in dias_validos:
+            abort(400, description=f"para frequência '{frequencia}', 'dia_semana_ou_mes' deve ser um dia da semana: {', '.join(sorted(dias_validos))}")
+    else:  # mensal
+        try:
+            dia_mes = int(dia_semana_ou_mes)
+            if dia_mes < 1 or dia_mes > 31:
+                abort(400, description="para frequência 'mensal', 'dia_semana_ou_mes' deve ser um número entre 1 e 31")
+        except ValueError:
+            abort(400, description="para frequência 'mensal', 'dia_semana_ou_mes' deve ser um número entre 1 e 31")
+
+    try:
+        quantidade_meses = int(body.get("quantidade_meses"))
+    except (TypeError, ValueError):
+        abort(400, description="o campo 'quantidade_meses' deve ser um inteiro")
+
+    if quantidade_meses < 1 or quantidade_meses > 12:
+        abort(400, description="o campo 'quantidade_meses' deve estar entre 1 e 12")
+
+    body["nome_compromisso"] = nome_compromisso
+    body["data_inicio"] = data_inicio
+    body["hora_compromisso"] = hora_compromisso.strftime("%H:%M")
+    body["frequencia"] = frequencia
+    body["dia_semana_ou_mes"] = dia_semana_ou_mes
+    body["quantidade_meses"] = quantidade_meses
+
+    return body
+
+
+def validate_recurrence_payload(body: dict) -> dict:
+    """Valida o corpo da requisição de criação de agendamento recorrente."""
+    require_fields(body, "nome_compromisso", "data_inicio", "hora_compromisso", "frequencia", "dia_semana_ou_mes", "quantidade_meses")
+
+    nome_compromisso = str(body.get("nome_compromisso", "")).strip()
+    if not nome_compromisso:
+        abort(400, description="o campo 'nome_compromisso' não deve ser vazio")
+
+    tz = ZoneInfo("America/Sao_Paulo")
+
+    try:
+        data_inicio = date.fromisoformat(str(body.get("data_inicio", "")).strip())
+    except (TypeError, ValueError):
+        abort(400, description="o campo 'data_inicio' deve estar no formato YYYY-MM-DD")
+
+    try:
+        hora_compromisso = datetime.strptime(str(body.get("hora_compromisso", "")).strip(), "%H:%M").time()
+    except (TypeError, ValueError):
+        abort(400, description="o campo 'hora_compromisso' deve estar no formato HH:MM")
+
+    agora = datetime.now(tz)
+    hoje = agora.date()
+
+    if data_inicio < hoje:
+        abort(400, description="o campo 'data_inicio' não pode estar no passado")
+
+    if data_inicio == hoje and hora_compromisso <= agora.time():
+        abort(400, description="não é permitido agendar um horário no passado")
+
+    frequencia = str(body.get("frequencia", "")).strip().lower()
+    if frequencia not in {"semanal", "quinzenal", "mensal"}:
+        abort(400, description="o campo 'frequencia' deve ser 'semanal', 'quinzenal' ou 'mensal'")
+
+    dia_semana_ou_mes = str(body.get("dia_semana_ou_mes", "")).strip().lower()
+    if frequencia in {"semanal", "quinzenal"}:
+        dias_validos = {"seg", "ter", "qua", "qui", "sex", "sab", "dom"}
+        if dia_semana_ou_mes not in dias_validos:
+            abort(400, description=f"para frequência '{frequencia}', 'dia_semana_ou_mes' deve ser um dia da semana: {', '.join(sorted(dias_validos))}")
+    else:  # mensal
+        try:
+            dia_mes = int(dia_semana_ou_mes)
+            if dia_mes < 1 or dia_mes > 31:
+                abort(400, description="para frequência 'mensal', 'dia_semana_ou_mes' deve ser um número entre 1 e 31")
+        except ValueError:
+            abort(400, description="para frequência 'mensal', 'dia_semana_ou_mes' deve ser um número entre 1 e 31")
+
+    try:
+        quantidade_meses = int(body.get("quantidade_meses"))
+    except (TypeError, ValueError):
+        abort(400, description="o campo 'quantidade_meses' deve ser um inteiro")
+
+    if quantidade_meses < 1 or quantidade_meses > 12:
+        abort(400, description="o campo 'quantidade_meses' deve estar entre 1 e 12")
+
+    return {
+        "nome_compromisso": nome_compromisso,
+        "data_inicio": data_inicio,
+        "hora_compromisso": hora_compromisso.strftime("%H:%M"),
+        "frequencia": frequencia,
+        "dia_semana_ou_mes": dia_semana_ou_mes,
+        "quantidade_meses": quantidade_meses,
+    }
+
 
 def validate_conta_recorrente_payload(body: dict) -> dict:
     """Valida o corpo da requisição de upsert de conta recorrente."""
