@@ -67,20 +67,22 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
     sql = """
         UPDATE public.usuarios
         SET
-            nome                = COALESCE(%(nome)s, nome),
-            razao_social        = COALESCE(%(razao_social)s, razao_social),
-            estado_atual        = COALESCE(%(estado_atual)s, estado_atual),
-            interacao_previa    = COALESCE(%(interacao_previa)s, interacao_previa),
-            tipo_negocio        = COALESCE(%(tipo_negocio)s, tipo_negocio),
-            descricao_negocio   = COALESCE(%(descricao_negocio)s, descricao_negocio),
-            descricao_objetivo  = COALESCE(%(descricao_objetivo)s, descricao_objetivo),
-            area_ajuda          = COALESCE(%(area_ajuda)s, area_ajuda),
-            preco_referencia    = COALESCE(%(preco_referencia)s, preco_referencia),
-            dias_trabalho       = COALESCE(%(dias_trabalho)s, dias_trabalho),
-            horario_inicio      = COALESCE(%(horario_inicio)s, horario_inicio),
-            horario_fim         = COALESCE(%(horario_fim)s, horario_fim),
-            versao_agente       = COALESCE(%(versao_agente)s, versao_agente),
-            data_ultimo_contato = NOW()
+            nome                    = COALESCE(%(nome)s, nome),
+            razao_social            = COALESCE(%(razao_social)s, razao_social),
+            estado_atual            = COALESCE(%(estado_atual)s, estado_atual),
+            interacao_previa        = COALESCE(%(interacao_previa)s, interacao_previa),
+            tipo_negocio            = COALESCE(%(tipo_negocio)s, tipo_negocio),
+            descricao_negocio       = COALESCE(%(descricao_negocio)s, descricao_negocio),
+            descricao_objetivo      = COALESCE(%(descricao_objetivo)s, descricao_objetivo),
+            area_ajuda              = COALESCE(%(area_ajuda)s, area_ajuda),
+            preco_referencia        = COALESCE(%(preco_referencia)s, preco_referencia),
+            dias_trabalho           = COALESCE(%(dias_trabalho)s, dias_trabalho),
+            horario_inicio          = COALESCE(%(horario_inicio)s, horario_inicio),
+            horario_fim             = COALESCE(%(horario_fim)s, horario_fim),
+            versao_agente           = COALESCE(%(versao_agente)s, versao_agente),
+            confirmacao_lembretes   = COALESCE(%(confirmacao_lembretes)s, confirmacao_lembretes),
+            ultimo_relatorio        = COALESCE(%(ultimo_relatorio)s, ultimo_relatorio),
+            data_ultimo_contato     = NOW()
         WHERE id = %(id)s
         RETURNING *;
     """
@@ -100,6 +102,8 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
         "horario_inicio": None,
         "horario_fim": None,
         "versao_agente": None,
+        "confirmacao_lembretes": None,
+        "ultimo_relatorio": None,
     }
     params.update(fields)
 

@@ -12,7 +12,8 @@ _openai_client: OpenAI | None = None
 def _get_client() -> OpenAI:
     global _openai_client
     if _openai_client is None:
-        _openai_client = OpenAI(api_key=Config.OPENAI_API_KEY)
+        # Embeddings always hit OpenAI directly — no base_url override (Gemini compat doesn't support embeddings)
+        _openai_client = OpenAI(api_key=Config.EMBEDDINGS_API_KEY)
     return _openai_client
 
 

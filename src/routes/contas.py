@@ -8,6 +8,13 @@ from src.utils.api_response import fail, ok
 contas_bp = Blueprint("contas", __name__)
 
 
+@contas_bp.route("/usuarios/<int:usuario_id>/contas-recorrentes", methods=["GET"])
+def list_contas(usuario_id: int):
+    with get_db_conn() as conn:
+        contas = q.list_by_usuario(conn, usuario_id)
+        return ok(200, contas)
+
+
 @contas_bp.route("/usuarios/<int:usuario_id>/contas-recorrentes", methods=["POST"])
 def upsert_conta(usuario_id: int):
     body = request.get_json(silent=True)
