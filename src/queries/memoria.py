@@ -26,14 +26,15 @@ def fetch_memoria_24h(conn, usuario_id: int, limit: int = 50) -> dict:
 
 
 def insert_memoria(conn, usuario_id: int, body: dict) -> dict:
+    agent_name = body.get("agent_name", "pivo")
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
-            INSERT INTO chat_memory (usuario_id, session_id, role, content)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO chat_memory (usuario_id, session_id, role, content, agent_name)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (usuario_id, body["session_id"], body["role"], body["content"]),
+            (usuario_id, body["session_id"], body["role"], body["content"], agent_name),
         )
         row = cur.fetchone()
     return {"id": row["id"]}
