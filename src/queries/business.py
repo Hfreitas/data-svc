@@ -35,11 +35,11 @@ def get_contexto_usuario(conn, usuario_id: int) -> dict | None:
             CASE
                 WHEN EXISTS (
                     SELECT 1 FROM public.assinaturas a
-                    WHERE a.usuario_id = u.id AND a.active = true
+                    WHERE a.usuario_id = u.id AND a.status = 'ACTIVATED'
                 ) THEN 'ativo'
                 WHEN EXISTS (
                     SELECT 1 FROM public.assinaturas a
-                    WHERE a.usuario_id = u.id AND a.active = false
+                    WHERE a.usuario_id = u.id AND a.status = 'DEACTIVATED'
                 ) THEN 'encerrado'
                 ELSE 'trial'
             END AS status_trial

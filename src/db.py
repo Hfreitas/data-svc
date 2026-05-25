@@ -10,7 +10,6 @@ _pool: pool.ThreadedConnectionPool | None = None
 
 def init_db():
     global _pool
-    # TODO: ajustar minconn/maxconn conforme carga esperada no VPS
     _pool = pool.ThreadedConnectionPool(minconn=1, maxconn=5, dsn=Config.DATABASE_URL)
 
 
@@ -21,7 +20,14 @@ def get_db_conn():
         yield conn
         conn.commit()
     except Exception:
-        conn.rollback()
+        if conn.closed:
+            _pool.putconn(conn, close=True)
+        else:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            _pool.putconn(conn)
         raise
-    finally:
+    else:
         _pool.putconn(conn)
