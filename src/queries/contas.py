@@ -3,8 +3,6 @@ Queries de contas recorrentes — funções puras que recebem conn + parâmetros
 """
 from psycopg2.extras import RealDictCursor
 
-TIPOS_VALIDOS = {"aluguel", "internet", "luz", "agua", "boleto"}
-
 
 def list_by_usuario(conn, usuario_id: int) -> list:
     sql = """
@@ -55,3 +53,39 @@ def upsert(conn, usuario_id: int, data: dict) -> dict:
         cursor.execute(sql, params)
         row = cursor.fetchone()
         return dict(row)
+
+
+def patch(conn, conta_id: int, usuario_id: int, data: dict) -> dict | None:
+    """Atualiza parcialmente uma conta recorrente.
+
+    Args:
+        conn: Conexão postgres
+        conta_id: ID da conta
+        usuario_id: ID do usuário (verificação de segurança)
+        data: Dict com campos para atualizar (já validados)
+
+    Returns:
+        Dict com a conta atualizada ou None se não encontrada.
+    """
+    _PATCHABLE = {"descricao", "valor", "dia_vencimento", "lembrete_ativo", "ativo"}
+
+    updates = {k: v for k, v in data.items() if k in _PATCHABLE}
+
+    if not updates:
+        return None
+
+    set_clause = ", ".join(f"{k} = %({k})s" for k in updates)
+    updates["conta_id"] = conta_id
+    updates["usuario_id"] = usuario_id
+
+    sql = f"""
+        UPDATE public.contas_recorrentes
+        SET {set_clause}, updated_at = NOW()
+        WHERE id = %(conta_id)s AND usuario_id = %(usuario_id)s
+        RETURNING id, tipo, descricao, valor, dia_vencimento, lembrete_ativo, ativo;
+    """
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, updates)
+        row = cur.fetchone()
+        return dict(row) if row else None

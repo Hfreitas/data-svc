@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify
 from src.db import get_db_conn
 from src.cache import cache_get, cache_set, cache_invalidate
 from src.config import Config
-from src.utils.validators import validate_telefone, require_fields
+from src.utils.validators import validate_telefone, require_fields, validate_usuario_agenda_fields
 import src.queries.usuarios as q
 from src.utils.api_response import fail, ok
 
@@ -58,9 +58,14 @@ def update_usuario(usuario_id: int):
         "tipo_negocio", "descricao_negocio", "descricao_objetivo",
         "area_ajuda", "preco_referencia", "dias_trabalho",
         "horario_inicio", "horario_fim", "data_ultimo_contato",
-        "versao_agente", "onboarding_step"
+        "versao_agente", "onboarding_step",
+        "contas_fixas_completo", "onboarding_concluido", "onboarding_timestamp", "cluster",
     }
-    
+
+    # Validar campos de agenda primeiro para coerção de tipos
+    validated = validate_usuario_agenda_fields(body)
+    body.update(validated)
+
     fields_to_update = {
         k: v for k, v in body.items()
         if k in allowed_fields and v is not None
