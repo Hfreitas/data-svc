@@ -57,9 +57,10 @@ def update_usuario(usuario_id: int):
         "nome", "razao_social", "estado_atual", "interacao_previa",
         "tipo_negocio", "descricao_negocio", "descricao_objetivo",
         "area_ajuda", "preco_referencia", "dias_trabalho",
-        "horario_inicio", "horario_fim", "data_ultimo_contato",
+        "horario_inicio", "horario_fim",
         "versao_agente", "onboarding_step",
         "contas_fixas_completo", "onboarding_concluido", "onboarding_timestamp", "cluster",
+        "confirmacao_lembretes",
     }
 
     # Validar campos de agenda primeiro para coerção de tipos

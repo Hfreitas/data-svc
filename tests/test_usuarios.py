@@ -50,6 +50,32 @@ class TestGetUsuario:
         assert data["error"] == "bad_request"
         assert "parâmetro 'telefone' inválido" in data["detail"]
 
+    def test_retorna_campos_onboarding_no_perfil(self, client, mock_db_conn, mocker):
+        telefone = "5511999999999"
+        usuario_fake = {
+            "id": 1,
+            "numero_telefone": telefone,
+            "nome": "Fulano",
+            "estado_atual": "menu",
+            "cluster": "comida",
+            "onboarding_step": "NEGOCIO",
+            "confirmacao_lembretes": True,
+            "onboarding_concluido": False,
+        }
+        _, conn = mock_db_conn("src.routes.usuarios.get_db_conn")
+        mocker.patch("src.routes.usuarios.cache_get", return_value=None)
+        mocker.patch("src.routes.usuarios.q.find_by_telefone", return_value=usuario_fake)
+        mocker.patch("src.routes.usuarios.cache_set")
+
+        resp = client.get(f"/usuarios?telefone={telefone}")
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["cluster"] == "comida"
+        assert data["onboarding_step"] == "NEGOCIO"
+        assert data["confirmacao_lembretes"] is True
+        assert data["onboarding_concluido"] is False
+
     def test_usa_cache_no_segundo_request(self, client, mock_db_conn, mocker):
         telefone = "5511999999999"
         usuario_fake = {
@@ -207,3 +233,33 @@ class TestUpdateUsuario:
         assert cache_invalidate_mock.call_count == 2
         cache_invalidate_mock.assert_any_call("usuario", usuario_atualizado["numero_telefone"])
         cache_invalidate_mock.assert_any_call("usuario", f"id:{usuario_id}")
+
+    def test_atualiza_cluster_e_onboarding_step(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        usuario_fake = {
+            "id": usuario_id,
+            "numero_telefone": "5511999999999",
+            "nome": "Fulano",
+            "cluster": "comida",
+            "onboarding_step": "NEGOCIO",
+            "onboarding_concluido": False,
+            "confirmacao_lembretes": True,
+        }
+        _, conn = mock_db_conn("src.routes.usuarios.get_db_conn")
+        update_mock = mocker.patch("src.routes.usuarios.q.update", return_value=usuario_fake)
+        mocker.patch("src.routes.usuarios.cache_invalidate")
+
+        payload = {
+            "cluster": "comida",
+            "onboarding_step": "NEGOCIO",
+            "confirmacao_lembretes": True,
+            "onboarding_concluido": False,
+        }
+        resp = client.put(f"/usuarios/{usuario_id}", json=payload)
+
+        assert resp.status_code == 200
+        call_fields = update_mock.call_args.args[2]
+        assert call_fields.get("cluster") == "comida"
+        assert call_fields.get("onboarding_step") == "NEGOCIO"
+        assert call_fields.get("confirmacao_lembretes") is True
+        assert call_fields.get("onboarding_concluido") is False
