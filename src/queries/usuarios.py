@@ -85,6 +85,7 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
             cluster                 = COALESCE(%(cluster)s, cluster),
             onboarding_step         = COALESCE(%(onboarding_step)s, onboarding_step),
             onboarding_concluido    = COALESCE(%(onboarding_concluido)s, onboarding_concluido),
+            onboarding_timestamp    = COALESCE(%(onboarding_timestamp)s, onboarding_timestamp),
             contas_fixas_completo   = COALESCE(%(contas_fixas_completo)s, contas_fixas_completo),
             ultimo_relatorio        = COALESCE(%(ultimo_relatorio)s, ultimo_relatorio),
             data_ultimo_contato     = NOW()
@@ -111,6 +112,7 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
         "cluster": None,
         "onboarding_step": None,
         "onboarding_concluido": None,
+        "onboarding_timestamp": None,
         "contas_fixas_completo": None,
         "ultimo_relatorio": None,
     }

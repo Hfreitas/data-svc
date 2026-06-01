@@ -32,8 +32,7 @@ def get_saldo(conn, usuario_id: int, mes: str) -> dict:
 
 def list_comprovantes(conn, usuario_id: int, mes: str, modo: str) -> list[dict]:
     modo = modo.strip().lower()
-    modo = {"gastos": "gasto", "vendas": "venda"}.get(modo, modo)
-    
+
     sql = """
         SELECT
             id,
