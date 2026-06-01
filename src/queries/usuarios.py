@@ -14,7 +14,8 @@ def find_by_telefone(conn, telefone: str) -> dict | None:
             area_ajuda, preco_referencia,
             dias_trabalho, horario_inicio, horario_fim,
             data_primeiro_contato, data_ultimo_contato,
-            versao_agente
+            versao_agente,
+            cluster, onboarding_step, confirmacao_lembretes, onboarding_concluido
         FROM public.usuarios
         WHERE numero_telefone = %(telefone)s
         LIMIT 1;
@@ -81,6 +82,10 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
             horario_fim             = COALESCE(%(horario_fim)s, horario_fim),
             versao_agente           = COALESCE(%(versao_agente)s, versao_agente),
             confirmacao_lembretes   = COALESCE(%(confirmacao_lembretes)s, confirmacao_lembretes),
+            cluster                 = COALESCE(%(cluster)s, cluster),
+            onboarding_step         = COALESCE(%(onboarding_step)s, onboarding_step),
+            onboarding_concluido    = COALESCE(%(onboarding_concluido)s, onboarding_concluido),
+            contas_fixas_completo   = COALESCE(%(contas_fixas_completo)s, contas_fixas_completo),
             ultimo_relatorio        = COALESCE(%(ultimo_relatorio)s, ultimo_relatorio),
             data_ultimo_contato     = NOW()
         WHERE id = %(id)s
@@ -103,6 +108,10 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
         "horario_fim": None,
         "versao_agente": None,
         "confirmacao_lembretes": None,
+        "cluster": None,
+        "onboarding_step": None,
+        "onboarding_concluido": None,
+        "contas_fixas_completo": None,
         "ultimo_relatorio": None,
     }
     params.update(fields)

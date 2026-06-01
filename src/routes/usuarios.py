@@ -60,6 +60,7 @@ def update_usuario(usuario_id: int):
         "horario_inicio", "horario_fim", "data_ultimo_contato",
         "versao_agente", "onboarding_step",
         "contas_fixas_completo", "onboarding_concluido", "onboarding_timestamp", "cluster",
+        "confirmacao_lembretes",
     }
 
     # Validar campos de agenda primeiro para coerção de tipos
