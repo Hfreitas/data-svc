@@ -228,3 +228,38 @@ class TestCreateComprovante:
         assert invalidate_prefix_mock.call_count == 2
         invalidate_prefix_mock.assert_any_call("saldo", f"{usuario_id}:")
         invalidate_prefix_mock.assert_any_call("comprovantes", f"{usuario_id}:")
+
+    def test_passa_canal_venda_para_upsert(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        from datetime import date
+        data_venda = date.today().isoformat()
+
+        payload = {
+            "operacao": "venda",
+            "item": "5 pizzas",
+            "item_hash": "hash-canal-001",
+            "quantidade": "5",
+            "valor_unitario": "40.00",
+            "valor_total": "200.00",
+            "data_venda": data_venda,
+            "canal_venda": "iFood",
+        }
+        comprovante_fake = {
+            "id": 20,
+            "operacao": "venda",
+            "item": "5 pizzas",
+            "valor_total": 200.0,
+            "data_venda": data_venda,
+            "data_compra": None,
+            "canal_venda": "iFood",
+        }
+        _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
+        upsert_mock = mocker.patch("src.routes.comprovantes.q.upsert", return_value=comprovante_fake)
+        mocker.patch("src.routes.comprovantes.cache_invalidate_prefix")
+
+        resp = client.post(f"/usuarios/{usuario_id}/comprovantes", json=payload)
+
+        assert resp.status_code == 200
+        upsert_args = upsert_mock.call_args.args
+        assert upsert_args[2].get("canal_venda") == "iFood"
+        assert resp.get_json()["canal_venda"] == "iFood"

@@ -42,6 +42,7 @@ def list_comprovantes(conn, usuario_id: int, mes: str, modo: str) -> list[dict]:
             quantidade,
             valor_unitario,
             valor_total,
+            canal_venda,
         CASE
             WHEN operacao = 'gasto' THEN data_compra
             WHEN operacao = 'venda' THEN data_venda
@@ -71,7 +72,7 @@ def list_comprovantes(conn, usuario_id: int, mes: str, modo: str) -> list[dict]:
     
 
 
-def upsert(conn, usuario_id: int, data: dict) -> dict:    
+def upsert(conn, usuario_id: int, data: dict) -> dict:
     params = {
         "usuario_id": usuario_id,
         "item": data.get("item"),
@@ -82,22 +83,24 @@ def upsert(conn, usuario_id: int, data: dict) -> dict:
         "item_hash": data.get("item_hash"),
         "data_venda": data.get("data_venda"),
         "data_compra": data.get("data_compra"),
+        "canal_venda": data.get("canal_venda"),
     }
-    
+
     sql = """
         INSERT INTO public.comprovantes (
             usuario_id, item, quantidade, valor_unitario, valor_total,
-            data_compra, data_venda, operacao, last_update, item_hash)
+            data_compra, data_venda, operacao, last_update, item_hash, canal_venda)
         VALUES (
             %(usuario_id)s, %(item)s, %(quantidade)s, %(valor_unitario)s, %(valor_total)s,
-            %(data_compra)s, %(data_venda)s, %(operacao)s, NOW(), %(item_hash)s)
+            %(data_compra)s, %(data_venda)s, %(operacao)s, NOW(), %(item_hash)s, %(canal_venda)s)
         ON CONFLICT (item_hash)
         DO UPDATE SET
             quantidade    = EXCLUDED.quantidade,
             valor_unitario = EXCLUDED.valor_unitario,
             valor_total   = EXCLUDED.valor_total,
-            last_update   = EXCLUDED.last_update
-        RETURNING id, operacao, item, valor_total, data_compra, data_venda;
+            last_update   = EXCLUDED.last_update,
+            canal_venda   = EXCLUDED.canal_venda
+        RETURNING id, operacao, item, valor_total, data_compra, data_venda, canal_venda;
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
         cursor.execute(sql, params)
