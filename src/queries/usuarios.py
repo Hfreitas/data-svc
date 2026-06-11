@@ -14,7 +14,7 @@ def find_by_telefone(conn, telefone: str) -> dict | None:
             area_ajuda, preco_referencia,
             dias_trabalho, horario_inicio, horario_fim,
             data_primeiro_contato, data_ultimo_contato,
-            versao_agente,
+            versao_agente, cpf_cnpj,
             cluster, onboarding_step, confirmacao_lembretes, onboarding_concluido
         FROM public.usuarios
         WHERE numero_telefone = %(telefone)s
@@ -88,6 +88,7 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
             onboarding_timestamp    = COALESCE(%(onboarding_timestamp)s, onboarding_timestamp),
             contas_fixas_completo   = COALESCE(%(contas_fixas_completo)s, contas_fixas_completo),
             ultimo_relatorio        = COALESCE(%(ultimo_relatorio)s, ultimo_relatorio),
+            cpf_cnpj                = COALESCE(%(cpf_cnpj)s, cpf_cnpj),
             data_ultimo_contato     = NOW()
         WHERE id = %(id)s
         RETURNING *;
@@ -115,6 +116,7 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
         "onboarding_timestamp": None,
         "contas_fixas_completo": None,
         "ultimo_relatorio": None,
+        "cpf_cnpj": None,
     }
     params.update(fields)
 
@@ -122,4 +124,60 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
         cursor.execute(sql, params)
         row = cursor.fetchone()
         return dict(row) if row else None
-    
+
+
+def get_prox_nfe(conn, usuario_id: int) -> dict:
+    sql = """
+        SELECT COALESCE(MAX(nfe_number), 0) + 1 AS prox
+        FROM public.invoice
+        WHERE user_id = %(usuario_id)s;
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"usuario_id": usuario_id})
+        row = cursor.fetchone()
+        prox = row["prox"] if row else 1
+        return {"nfeNumber": prox, "rpsNumber": prox}
+
+
+def get_clientes_nf(conn, usuario_id: int) -> list:
+    sql = """
+        SELECT e.id, e.name AS nome, e.federal_tax_number AS cnpj, e.email
+        FROM public.enterprise_user eu
+        JOIN public.enterprise e ON eu.id_enterprise = e.id
+        WHERE eu.id_user = %(usuario_id)s
+        ORDER BY e.name;
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"usuario_id": usuario_id})
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def save_cliente_nf(conn, usuario_id: int, nome: str, cnpj: str, email: str) -> dict:
+    sql_upsert_enterprise = """
+        INSERT INTO public.enterprise (name, federal_tax_number, email)
+        VALUES (%(nome)s, %(cnpj)s, %(email)s)
+        ON CONFLICT (federal_tax_number)
+        DO UPDATE SET name = %(nome)s, email = %(email)s
+        RETURNING id;
+    """
+    sql_check_link = """
+        SELECT id FROM public.enterprise_user
+        WHERE id_user = %(id_user)s AND id_enterprise = %(id_enterprise)s
+        LIMIT 1;
+    """
+    sql_link_user = """
+        INSERT INTO public.enterprise_user (id_user, id_enterprise)
+        VALUES (%(id_user)s, %(id_enterprise)s);
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql_upsert_enterprise, {"nome": nome, "cnpj": cnpj, "email": email})
+        ent_row = cursor.fetchone()
+        enterprise_id = ent_row["id"]
+
+        cursor.execute(sql_check_link, {"id_user": usuario_id, "id_enterprise": enterprise_id})
+        if not cursor.fetchone():
+            cursor.execute(sql_link_user, {"id_user": usuario_id, "id_enterprise": enterprise_id})
+
+    return {"id": enterprise_id, "nome": nome, "cnpj": cnpj, "email": email}
+

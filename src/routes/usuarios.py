@@ -60,7 +60,7 @@ def update_usuario(usuario_id: int):
         "horario_inicio", "horario_fim",
         "versao_agente", "onboarding_step",
         "contas_fixas_completo", "onboarding_concluido", "onboarding_timestamp", "cluster",
-        "confirmacao_lembretes",
+        "confirmacao_lembretes", "cpf_cnpj",
     }
 
     # Validar campos de agenda primeiro para coerção de tipos
@@ -89,4 +89,35 @@ def update_usuario(usuario_id: int):
         cache_invalidate("usuario", f"id:{usuario_id}")
 
         return ok(200, usuario)
+
+
+@usuarios_bp.route("/usuarios/<int:usuario_id>/prox-nfe", methods=["GET"])
+def prox_nfe(usuario_id: int):
+    with get_db_conn() as conn:
+        result = q.get_prox_nfe(conn, usuario_id)
+    return ok(200, result)
+
+
+@usuarios_bp.route("/usuarios/<int:usuario_id>/clientes-nf", methods=["GET"])
+def get_clientes_nf(usuario_id: int):
+    with get_db_conn() as conn:
+        clientes = q.get_clientes_nf(conn, usuario_id)
+    return ok(200, clientes)
+
+
+@usuarios_bp.route("/usuarios/<int:usuario_id>/clientes-nf", methods=["POST"])
+def create_cliente_nf(usuario_id: int):
+    body = request.get_json(silent=True)
+    if not body or not body.get("nome") or not body.get("cnpj"):
+        return fail("dados_incompletos", "Campos obrigatorios: nome, cnpj", 400)
+
+    with get_db_conn() as conn:
+        cliente = q.save_cliente_nf(
+            conn,
+            usuario_id,
+            body["nome"],
+            body["cnpj"],
+            body.get("email", ""),
+        )
+    return ok(200, cliente)
 
