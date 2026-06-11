@@ -29,6 +29,12 @@ def validate_conta_recorrente_payload(body: dict) -> dict:
         abort(400, description=f"o campo 'tipo' está inválido. Use: {permitidos}")
 
     try:
+        valor = float(body.get("valor"))
+    except (TypeError, ValueError):
+        abort(400, description="o campo 'valor' deve ser um número")
+    body["valor"] = valor
+
+    try:
         dia_vencimento = int(body.get("dia_vencimento"))
     except (TypeError, ValueError):
         abort(400, description="o campo 'dia_vencimento' deve ser inteiro entre 1 e 31")

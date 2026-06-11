@@ -121,7 +121,8 @@ def generate_recurrence_dates(
             if current > data_final:
                 break
 
-            datas.append(current)
+            if current >= data_inicio:
+                datas.append(current)
 
             # Próximo mês
             month += 1

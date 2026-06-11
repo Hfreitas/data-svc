@@ -102,11 +102,11 @@ def validate_update_agendamento_payload(body: dict) -> dict:
     resultado = {}
 
     if "nome_compromisso" in body:
-        nome_compromisso = str(body.get("nome_compromisso", "")).strip()
-        if nome_compromisso and nome_compromisso != body.get("nome_compromisso"):
-            abort(400, description="o campo 'nome_compromisso' não deve ser vazio ou apenas espaços")
-        if nome_compromisso:
-            resultado["nome_compromisso"] = nome_compromisso
+        resultado["nome_compromisso"] = normalize_non_empty_text(
+            body.get("nome_compromisso", ""),
+            "nome_compromisso",
+            "o campo 'nome_compromisso' não deve ser vazio ou apenas espaços",
+        )
 
     if "data_compromisso" in body:
         data_compromisso = parse_iso_date(
