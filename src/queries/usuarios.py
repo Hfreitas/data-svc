@@ -155,10 +155,10 @@ def get_clientes_nf(conn, usuario_id: int) -> list:
 
 def save_cliente_nf(conn, usuario_id: int, nome: str, cnpj: str, email: str) -> dict:
     sql_upsert_enterprise = """
-        INSERT INTO public.enterprise (name, federal_tax_number, email)
-        VALUES (%(nome)s, %(cnpj)s, %(email)s)
+        INSERT INTO public.enterprise (name, legal_name, federal_tax_number, email)
+        VALUES (%(nome)s, %(nome)s, %(cnpj)s, %(email)s)
         ON CONFLICT (federal_tax_number)
-        DO UPDATE SET name = %(nome)s, email = %(email)s
+        DO UPDATE SET name = %(nome)s, legal_name = %(nome)s, email = %(email)s
         RETURNING id;
     """
     sql_check_link = """
