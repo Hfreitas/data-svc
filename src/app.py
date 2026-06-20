@@ -9,6 +9,9 @@ from src.routes.comprovantes import comprovantes_bp
 from src.routes.agendamentos import agendamentos_bp
 from src.routes.listas import listas_bp
 from src.routes.contas import contas_bp
+from src.routes.chat_memory import bp as chat_memory_bp
+from src.routes.llm import bp as llm_bp
+from src.routes.process_message import bp as process_message_bp
 
 
 def create_app() -> Flask:
@@ -18,7 +21,7 @@ def create_app() -> Flask:
     @app.before_request
     def check_api_key():
         if Config.API_KEY is None:
-            return  # auth desativada — API_KEY não definida (dev local)
+            return
         key = request.headers.get("X-API-Key")
         if not key or key != Config.API_KEY:
             return jsonify({"error": "unauthorized"}), 401
@@ -31,5 +34,9 @@ def create_app() -> Flask:
     app.register_blueprint(agendamentos_bp)
     app.register_blueprint(listas_bp)
     app.register_blueprint(contas_bp)
-
+    app.register_blueprint(chat_memory_bp, url_prefix='')
+    app.register_blueprint(llm_bp, url_prefix='')
+    app.register_blueprint(process_message_bp, url_prefix='')
     return app
+
+application = create_app()

@@ -1,0 +1,1640 @@
+{
+  "name": "Agente 5 — Agenda (v7.1) OpenAI",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  u.id as usuario_id,\n  u.nome as usuario_nome,\n  u.numero_telefone,\n  u.tipo_negocio,\n  u.data_primeiro_contato,\n  'compromisso' as tipo_lembrete,\n  a.id as referencia_id,\n  a.nome_compromisso as titulo,\n  a.data_compromisso as data_evento,\n  a.hora_compromisso as horario\nFROM public.usuarios u\nINNER JOIN public.agendamentos a ON u.id = a.usuario_id\nWHERE \n  a.status = 'pendente'\n  AND DATE(a.data_compromisso) = CURRENT_DATE\n  AND a.lembrete_enviado = false\n\nUNION ALL\n\nSELECT\n  u.id as usuario_id,\n  u.nome as usuario_nome,\n  u.numero_telefone,\n  u.tipo_negocio,\n  u.data_primeiro_contato,\n  'das' as tipo_lembrete,\n  c.id as referencia_id,\n  COALESCE(c.descricao, c.tipo) as titulo,\n  NULL::DATE as data_evento,\n  NULL::TIME as horario\nFROM public.usuarios u\nINNER JOIN public.contas_recorrentes c ON u.id = c.usuario_id\nWHERE\n  c.ativo = true\n  AND c.lembrete_ativo = true\n  AND c.dia_vencimento = 20\n\nUNION ALL\n\nSELECT\n  u.id as usuario_id,\n  u.nome as usuario_nome,\n  u.numero_telefone,\n  u.tipo_negocio,\n  u.data_primeiro_contato,\n  'declaracao_anual' as tipo_lembrete,\n  u.id as referencia_id,\n  'Declaracao Anual do MEI' as titulo,\n  DATE('2026-05-31') as data_evento,\n  NULL::TIME as horario\nFROM public.usuarios u\nWHERE\n  EXTRACT(MONTH FROM CURRENT_DATE) = 5\n  AND EXTRACT(DAY FROM CURRENT_DATE) IN (24, 30, 31)\n\nORDER BY usuario_id, tipo_lembrete;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2944,
+        1024
+      ],
+      "id": "a5c61eef-f157-469c-be6b-7c06975383f0",
+      "name": "Buscar Lembretes Pendentes",
+      "credentials": {
+        "postgres": {
+          "id": "rXGTo0vnj1yphU2P",
+          "name": "SUPABASE Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUSCAR AGENDAMENTOS CANCELAR - CORRIGIDO\n// (antes continha o código de reagendamento por engano)\n// ============================================\nconst input = $input.first().json;\n\n// Só age quando a intenção é cancelar\nif (input._acao !== 'cancelar') {\n    return [{ json: input }];\n}\n\n// 🔧 MOCK p/ teste — troque para false quando o data-svc estiver pronto\nconst USE_MOCK = true;\n\nif (USE_MOCK) {\n    const agendamentosMock = [\n        {\n            id: 999,\n            nome_compromisso: 'Reunião com João',\n            data_compromisso: '2026-06-02T00:00:00.000Z',\n            hora_compromisso: '10:00:00'\n        }\n    ];\n    console.log(`📋 [MOCK] Agendamentos para cancelar: ${agendamentosMock.length}`);\n    return [{ json: { ...input, agendamentos: agendamentosMock } }];\n}\n\n// 🌐 VERSÃO REAL (data-svc)\ntry {\n    const usuarioId = input.usuario_id || input.id;\n    const resp = await $http.get(\n        `http://data-svc:8000/usuarios/${usuarioId}/agendamentos`,\n        { qs: { semana: 'atual' }, headers: { 'X-API-Key': $env.DATA_SVC_API_KEY } }\n    );\n    const agendamentos = resp.body?.agendamentos || resp.json?.agendamentos || [];\n    console.log(`📋 Agendamentos para cancelar: ${agendamentos.length}`);\n    return [{ json: { ...input, agendamentos } }];\n} catch (e) {\n    console.error('❌ Erro ao buscar agendamentos:', e.message);\n    return [{ json: { ...input, agendamentos: [] } }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1312,
+        688
+      ],
+      "id": "4107e0e0-26bf-4a86-aa4e-5a85bf26004b",
+      "name": "BUSCAR AGENDAMENTOS CANCELAR"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst msg = (input.mensagem || '').toLowerCase().trim();\n\n// Detecta intenção de cancelamento\nconst isCancel = /cancela|remove|deleta|apaga|desmarca|tira|desmarcar|cancelar/.test(msg);\n\nif (!isCancel) {\n    console.log('⏭️ Não é cancelamento, continuando fluxo normal');\n    return [{ json: { ...input, _acao: null } }];\n}\n\nconsole.log('🗑️ Cancelamento detectado');\n\n// Tenta extrair nome/descrição mencionado\n// Ex: \"cancela reunião com João\" → \"reunião com joão\"\nconst match = msg.match(/cancela\\s+(?:a\\s+)?(?:o\\s+)?(.+?)(?:\\s+de|\\s+em|\\s+às|$)/i);\nconst nomeMencionado = match ? match[1].trim() : null;\n\nreturn [{\n    json: {\n        ...input,\n        _acao: 'cancelar',\n        _nomeMencionado: nomeMencionado,\n        _timestamp: new Date().toISOString()\n    }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1536,
+        688
+      ],
+      "id": "261b143e-61c0-4601-b5fa-cf03cbf820f8",
+      "name": "Reconhecer Cancelamento"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Obter os dados da memória (saída do HTTP Request)\nconst memoria = $input.first().json;\n\n// Obter os dados originais que vieram do nó \"Mesclar Dados\"\nlet dadosOriginais = {};\ntry {\n    dadosOriginais = $('Mesclar Dados').first().json;\n} catch(e) {\n    dadosOriginais = {};\n}\n\n// Mesclar: prevalecem os dados originais, mas adiciona a memória\nconst mesclado = {\n    ...dadosOriginais,   // contém mensagem, telefone, perfil, etc.\n    memoria: memoria,    // histórico da conversa\n    chat_memory: memoria // compatibilidade com campos usados depois\n};\n\nreturn [{ json: mesclado }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2880,
+        592
+      ],
+      "id": "64b538d6-ba78-4424-b501-1c32b4ad8a8d",
+      "name": "Obter os dados da memória (saída do HTTP Request)"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -4000,
+        592
+      ],
+      "id": "ebc0aa2f-d61e-4d0b-a61e-b0dfdc0bb5db",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mescla a resposta da API com os dados originais (preservando campos da coleta)\n// Trata casos onde o nó de coleta não foi executado.\n\nlet original;\n\ntry {\n    original = $('GERENCIAR COLETA DE CONTAS FIXAS').first().json;\n    console.log('✅ Dados do nó de coleta recuperados com sucesso.');\n} catch (error) {\n    console.log('ℹ️ Nó de coleta não executado nesta execução. Usando input atual como original.');\n    original = $input.first().json;\n}\n\nconst respostaApi = $input.first().json;\n\n// Preserva tudo do original, mas adiciona/sobrescreve com a resposta da API se necessário\nconst merged = {\n    ...original,\n    api_response: respostaApi,\n    // Garante que mensagem não seja perdida (caso a API não retorne)\n    message: original.message || respostaApi.message\n};\n\nreturn [{ json: merged }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3616,
+        736
+      ],
+      "id": "c434e3a9-6676-4b43-8909-a97b5383555e",
+      "name": "Mescla a resposta da API"
+    },
+    {
+      "parameters": {
+        "jsCode": "const personalidade = `# 🤖 MEIrelles | A Secretária do MEI\n\nVocê é a MEIrelles, secretária pessoal do MEI no WhatsApp. \nVocê organiza compromissos, envia lembretes, gerencia a rotina \ne coleta as Contas Fixas mensais.\n\n## ⚠️ O QUE VOCÊ NÃO FAZ\n❌ Registrar gastos ou vendas\n❌ Análises de negócio\n❌ Notas fiscais\n\n---\n\n## 🚨 REGRA CRÍTICA 1 - COLETA PROATIVA DE CONTAS FIXAS\n\n**VARIÁVEIS DE CONTROLE:**\n- \\`precisa_coletar_contas\\` (boolean)\n- \\`mensagem_coleta_contas\\` (string pronta)\n\n**CONDIÇÃO DE DISPARO:**\nQuando \\`precisa_coletar_contas === true\\`\n\n**QUANDO ISSO ACONTECE:**\n- Primeira janela de 24h após o onboarding do MEI\n- O MEI ainda NÃO cadastrou nenhuma conta fixa\n- É o momento ideal para coletar as contas\n\n**AÇÃO OBRIGATÓRIA:**\nVocê DEVE enviar EXATAMENTE a mensagem fornecida em \\`mensagem_coleta_contas\\`\n\n**REGRAS:**\n1. NÃO faça nada além disso até o MEI responder\n2. NÃO pergunte mais nada\n3. NÃO ofereça outras opções\n4. Após enviar, aguarde a resposta do MEI\n5. Isso acontece apenas UMA vez\n\n**FORMATO DA MENSAGEM A ENVIAR:**\n{{mensagem_coleta_contas}}\n\n---\n\n## 🚨 REGRA CRÍTICA 2 - CONFLITO DE HORÁRIO\n\n**VARIÁVEIS DE CONTROLE:**\n- \\`agenda_formatada\\` (compromissos existentes)\n\n**FLUXO OBRIGATÓRIO AO RECEBER PEDIDO DE AGENDAMENTO:**\n\n1. Verifique se o horário solicitado já existe na \\`agenda_formatada\\`\n2. Se existir, informe o conflito imediatamente\n3. Mostre o compromisso que já está marcado\n4. Sugira horários próximos disponíveis (30 min antes ou depois)\n5. Deixe o MEI decidir qual ação tomar\n\n**FORMATO DA MENSAGEM DE CONFLITO:**\n\"[DIA] às [HORA] já tem:\n*\\\"[compromisso existente]\\\"*\n\nQue tal?\n1️⃣ [DIA] às [HORÁRIO ANTERIOR]\n2️⃣ [DIA] às [PRÓXIMO HORÁRIO]\n3️⃣ Outro horário\"\n\n**REGRAS:**\n- Nunca cancele um compromisso existente sem avisar\n- Nunca substitua automaticamente\n- Sempre ofereça alternativas\n\n---\n\n## 🚨 REGRA CRÍTICA 3 - CANCELAMENTO DE COMPROMISSO\n\n**FLUXO OBRIGATÓRIO:**\n\n1. Identifique qual compromisso o MEI quer cancelar\n2. Mostre o compromisso encontrado\n3. Peça confirmação explícita\n4. Só cancele após confirmação do MEI\n\n**FORMATO DA MENSAGEM:**\n\"Encontrei esse compromisso:\n\n*\\\"[nome do compromisso]\\\"*\n[DIA DA SEMANA em CAPS] às [HH:MM]\n\nConfirma o cancelamento?\n1️⃣ Sim, cancela\n2️⃣ Não, mantém\"\n\n**APÓS CONFIRMAÇÃO:**\n\"Cancelado. 📅\"\n\n---\n\n## 🚨 REGRA CRÍTICA 4 - REAGENDAMENTO DE COMPROMISSO\n\n**FLUXO OBRIGATÓRIO:**\n\n1. Identifique o compromisso original\n2. Obtenha a nova data e hora do MEI\n3. Verifique se o novo horário tem conflito\n4. Mostre o resumo (antes → depois)\n5. Peça confirmação\n\n**FORMATO DA MENSAGEM:**\n\"Encontrei esse compromisso:\n\n*\\\"[nome do compromisso]\\\"*\n[DIA ORIGINAL] às [HORA ORIGINAL]\n\nVê se eu entendi certo o novo horário:\n\n*\\\"[nome do compromisso]\\\"*\n[NOVO DIA] às [NOVA HORA]\n\nConfirma o reagendamento?\n1️⃣ Sim\n2️⃣ Ajustar\"\n\n**APÓS CONFIRMAÇÃO:**\n\"Reagendado. 📅\"\n\n---\n\n## 📅 AGENDAMENTO DE COMPROMISSOS\n\n### INFORMAÇÕES OBRIGATÓRIAS\nPara agendar, você PRECISA de: **nome específico + data + hora**\n\n### REGRA — NOME ESPECÍFICO\nNomes genéricos NÃO são aceitos. Sempre peça o detalhe:\n\n| O usuário disse | Você pergunta |\n|---|---|\n| \"Entrega\" | \"Entrega de quê? Me dá o detalhe pra eu anotar certo.\" |\n| \"Reunião com fornecedor\" | \"Reunião com qual fornecedor? Me passa o nome.\" |\n| \"Reunião com cliente\" | \"Reunião com qual cliente? Me passa o nome.\" |\n| \"Consulta\" | \"Consulta com quem? Me passa o nome ou especialidade.\" |\n| \"Visita\" | \"Visita onde ou com quem? Me passa o detalhe.\" |\n\n**Regra geral:** se o compromisso envolve uma pessoa, empresa ou produto sem nome identificado, pergunte antes de confirmar.\n\n### CONFIRMAÇÃO OBRIGATÓRIA\nNunca registre nada sem confirmação explícita. Use este formato:\n\n\"Vê se eu entendi certo:\n\n*\\\"{nome do compromisso}\\\"*\n{DIA DA SEMANA em MAIÚSCULO} às {HH:MM}\n\nConfirma?\n1️⃣ Sim\n2️⃣ Ajustar\"\n\n### APÓS CONFIRMAÇÃO\n\"Anotado. 📅\"\n\n---\n\n## 💰 COLETA DE CONTAS FIXAS (PÓS-PROATIVO)\n\nApós o MEI responder à mensagem proativa com números:\n\n**PASSO 1 - VALOR**\n\"Qual é o valor da [conta]?\"\n\n**PASSO 2 - VENCIMENTO**\n\"Qual é o dia do vencimento?\"\n\n**PASSO 3 - PRÓXIMA CONTA**\nAvança para a próxima conta escolhida\n\n### CONFIRMAÇÃO ANTES DE SALVAR\n\"Vê se eu entendi certo:\n\nAS CONTAS:\n01 — [conta] — dia [X] — R$ [valor]\n02 — [conta] — dia [X] — R$ [valor]\n\nConfirma?\n1️⃣ Sim\n2️⃣ Ajustar\"\n\n### SE O MEI QUISER DEIXAR PARA DEPOIS\n\"Sem problema. Quer marcar um horário para a gente fazer isso?\n\n1️⃣ Amanhã\n2️⃣ Depois de amanhã\n3️⃣ Outro dia\"\n\nSe o MEI disser \"amanhã de manhã\" → assuma 10h30.\n\n---\n\n## 📋 CONSULTA DE AGENDA\n\n### FORMATO DA AGENDA\n\"📅 *Agenda de {nome_mei} — semana de {DD/MM}:*\n\nSEGUNDA {DD/MM}\n01 *\\\"{compromisso}\\\"* às {HH:MM}\n\nTERÇA {DD/MM}\n01 *\\\"{compromisso}\\\"* às {HH:MM}\n\nQuer agendar mais alguma coisa?\n1️⃣ Sim\n2️⃣ Não\n3️⃣ Depois\"\n\n### AGENDA VAZIA\n\"Essa semana está sem compromissos. Quer agendar algo?\n1️⃣ Sim\n2️⃣ Não\n3️⃣ Depois\"\n\n---\n\n## 🔔 LEMBRETES AUTOMÁTICOS\n\n### LEMBRETE DE COMPROMISSO\n🔔 Lembrete:\n*\"{nome do compromisso}\"*\n{HOJE/AMANHÃ/DIA DA SEMANA} às {HH:MM}\n\n### LEMBRETE DE CONTA FIXA\n🔔 {nome_mei}, hoje vence:\n*{nome da conta}*\nR$ {valor}\n\n### LEMBRETE DO DAS\n🔔 {nome_mei}, hoje é dia 20:\n*Pagamento do DAS*\n[link]\n\n---\n\n## 📌 RESUMO DAS REGRAS PARA VOCÊ\n\n1. **Sempre verifique** \\`precisa_coletar_contas\\` no início\n2. **Sempre verifique** conflito de horário antes de agendar\n3. **Nunca cancele ou reagende** sem confirmação explícita\n4. **Adapte a linguagem** ao cluster do MEI\n5. **Seja direta e eficiente** - o MEI está trabalhando\n\n---\n\n## 💬 MENSAGEM DO USUÁRIO\n{{mensagem}}`;\n\nreturn [{ json: { personalidade: personalidade } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        592
+      ],
+      "id": "d8e38e7c-6cb4-4e3a-86ac-67c21e25d022",
+      "name": "MEIrelles - Personalidade"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// GERENCIAR COLETA DE CONTAS FIXAS - SEM HARDCODE\n// ============================================\n\nconst input = $input.first().json;\nconst mensagem = (input.mensagem || '').trim();\nconst msgLower = mensagem.toLowerCase();\n\n// Recupera estado salvo anteriormente\nlet estado = input._estado_coleta || null;\nlet contasSelecionadas = input._contas_selecionadas || [];\nlet indiceAtual = input._indice_atual || 0;\nlet contasColetadas = input._contas_coletadas || [];\n\n// ============================================\n// CONFIGURAÇÃO DINÂMICA (usando variáveis de ambiente)\n// ============================================\nconst BASE_URL = $env.DATA_SVC_URL || 'http://data-svc:8000';\nconst API_KEY = $env.DATA_SVC_API_KEY;\n\n// Validação para evitar erros em produção\nif (!API_KEY) {\n    console.warn('⚠️ API_KEY não configurada. Defina DATA_SVC_API_KEY nas variáveis de ambiente.');\n}\n\n// ============================================\n// SE NÃO TEM ESTADO: PRIMEIRO DISPARO (mensagem proativa)\n// ============================================\nif (!estado) {\n    const mensagemProativa = input.mensagem_coleta_contas;\n    if (!mensagemProativa) {\n        return [{\n            json: {\n                ...input,\n                acao: 'RESPONDER',\n                mensagens: [{ conteudo: \"Vamos cadastrar suas contas fixas. Por favor, me informe os números das contas que você paga todo mês.\" }]\n            }\n        }];\n    }\n    return [{\n        json: {\n            ...input,\n            _estado_coleta: 'aguardando_numeros',\n            acao: 'RESPONDER',\n            mensagens: [{ conteudo: mensagemProativa }]\n        }\n    }];\n}\n\n// Função para extrair lista de contas a partir da string do cluster (formato \"1️⃣ Aluguel 2️⃣ Luz ...\")\nfunction extrairListaContas(listaContasStr) {\n    const contas = [];\n    const partes = listaContasStr.split(/\\d️⃣\\s+/);\n    for (let i = 1; i < partes.length; i++) {\n        const conta = partes[i].trim();\n        if (conta) contas.push(conta);\n    }\n    return contas;\n}\n\n// ============================================\n// ESTADO: AGUARDANDO NÚMEROS\n// ============================================\nif (estado === 'aguardando_numeros') {\n    const numeros = mensagem.match(/\\d+/g);\n    if (!numeros || numeros.length === 0) {\n        return [{\n            json: {\n                ...input,\n                acao: 'RESPONDER',\n                mensagens: [{ conteudo: \"Não entendi. Por favor, responda com os números das contas separados por vírgula ou espaço. Ex: 1,3,5\" }]\n            }\n        }];\n    }\n    \n    const listaContasCompleta = extrairListaContas(input.lista_contas || \"\");\n    const selecionadas = [];\n    for (const num of numeros) {\n        const idx = parseInt(num) - 1;\n        if (idx >= 0 && idx < listaContasCompleta.length) {\n            selecionadas.push(listaContasCompleta[idx]);\n        }\n    }\n    \n    if (selecionadas.length === 0) {\n        return [{\n            json: {\n                ...input,\n                acao: 'RESPONDER',\n                mensagens: [{ conteudo: \"Números inválidos. Por favor, escolha da lista que enviei.\" }]\n            }\n        }];\n    }\n    \n    return [{\n        json: {\n            ...input,\n            _estado_coleta: 'aguardando_valor',\n            _contas_selecionadas: selecionadas,\n            _indice_atual: 0,\n            _contas_coletadas: [],\n            acao: 'RESPONDER',\n            mensagens: [{ conteudo: `Qual é o valor da conta \"${selecionadas[0]}\"? (ex: 150,00)` }]\n        }\n    }];\n}\n\n// ============================================\n// ESTADO: AGUARDANDO VALOR\n// ============================================\nif (estado === 'aguardando_valor') {\n    let valor = mensagem.replace(',', '.').match(/(\\d+(?:\\.\\d+)?)/);\n    if (!valor) {\n        return [{\n            json: {\n                ...input,\n                acao: 'RESPONDER',\n                mensagens: [{ conteudo: `Por favor, informe o valor da conta \"${contasSelecionadas[indiceAtual]}\" como número. Ex: 150,00` }]\n            }\n        }];\n    }\n    const valorNumerico = parseFloat(valor[1]);\n    if (isNaN(valorNumerico)) {\n        return [{\n            json: {\n                ...input,\n                acao: 'RESPONDER',\n                mensagens: [{ conteudo: `Valor inválido. Digite apenas números para a conta \"${contasSelecionadas[indiceAtual]}\".` }]\n            }\n        }];\n    }\n    \n    const contasAtualizadas = [...contasColetadas];\n    contasAtualizadas.push({\n        nome: contasSelecionadas[indiceAtual],\n        valor: valorNumerico,\n        vencimento: null\n    });\n    \n    return [{\n        json: {\n            ...input,\n            _estado_coleta: 'aguardando_vencimento',\n            _contas_coletadas: contasAtualizadas,\n            acao: 'RESPONDER',\n            mensagens: [{ conteudo: `Qual o dia do vencimento da conta \"${contasSelecionadas[indiceAtual]}\"? (ex: 15)` }]\n        }\n    }];\n}\n\n// ============================================\n// ESTADO: AGUARDANDO VENCIMENTO\n// ============================================\nif (estado === 'aguardando_vencimento') {\n    const dia = parseInt(mensagem.match(/\\b(\\d{1,2})\\b/)?.[0]);\n    if (!dia || dia < 1 || dia > 31) {\n        return [{\n            json: {\n                ...input,\n                acao: 'RESPONDER',\n                mensagens: [{ conteudo: `Dia inválido. Informe um dia entre 1 e 31 para a conta \"${contasSelecionadas[indiceAtual]}\".` }]\n            }\n        }];\n    }\n    \n    const contasAtualizadas = [...contasColetadas];\n    contasAtualizadas[indiceAtual].vencimento = dia;\n    \n    const proximoIndice = indiceAtual + 1;\n    if (proximoIndice < contasSelecionadas.length) {\n        return [{\n            json: {\n                ...input,\n                _estado_coleta: 'aguardando_valor',\n                _contas_coletadas: contasAtualizadas,\n                _indice_atual: proximoIndice,\n                acao: 'RESPONDER',\n                mensagens: [{ conteudo: `Qual é o valor da conta \"${contasSelecionadas[proximoIndice]}\"?` }]\n            }\n        }];\n    } else {\n        // Monta resumo com todas as contas\n        let resumo = \"Vê se eu entendi certo:\\n\\nAS CONTAS:\\n\";\n        contasAtualizadas.forEach((c, i) => {\n            resumo += `${(i+1).toString().padStart(2,'0')} — ${c.nome} — dia ${c.vencimento} — R$ ${c.valor.toFixed(2)}\\n`;\n        });\n        resumo += \"\\nConfirma?\\n1️⃣ Sim\\n2️⃣ Ajustar\";\n        \n        return [{\n            json: {\n                ...input,\n                _estado_coleta: 'confirmacao',\n                _contas_coletadas: contasAtualizadas,\n                acao: 'RESPONDER',\n                mensagens: [{ conteudo: resumo }]\n            }\n        }];\n    }\n}\n\n// ============================================\n// ESTADO: CONFIRMAÇÃO\n// ============================================\nif (estado === 'confirmacao') {\n    if (msgLower === '1' || msgLower === 'sim') {\n        const usuario_id = input.usuario_id;\n        \n        // Verifica se a API_KEY está disponível antes de tentar salvar\n        if (!API_KEY) {\n            console.error('❌ API_KEY não configurada. Não é possível salvar contas.');\n            return [{\n                json: {\n                    ...input,\n                    acao: 'RESPONDER',\n                    mensagens: [{ conteudo: \"Desculpe, não consegui registrar suas contas porque a chave de API não está configurada. Por favor, contate o suporte.\" }],\n                    _estado_coleta: null\n                }\n            }];\n        }\n        \n        try {\n            // Envia cada conta para o data-svc\n            const promises = contasColetadas.map(c => \n                $http({\n                    method: 'POST',\n                    url: `${BASE_URL}/usuarios/${usuario_id}/contas-recorrentes`,\n                    body: {\n                        tipo: c.nome,\n                        descricao: c.nome,\n                        valor: c.valor,\n                        dia_vencimento: c.vencimento,\n                        lembrete_ativo: true,   \n                        ativo: true        \n                    },\n                    headers: {\n                        'Content-Type': 'application/json',\n                        'X-API-Key': API_KEY\n                    }\n                })\n            );\n            await Promise.all(promises);\n            \n            // Opcional: marcar que as contas foram coletadas (se endpoint PATCH existir)\n            // await $http({\n            //     method: 'PATCH',\n            //     url: `${BASE_URL}/usuarios/${usuario_id}`,\n            //     body: { contas_fixas_completo: true },\n            //     headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY }\n            // });\n            \n            return [{\n                json: {\n                    ...input,\n                    acao: 'RESPONDER',\n                    mensagens: [{ conteudo: \"✅ Contas fixas registradas! Agora posso te lembrar no dia do vencimento.\" }],\n                    _estado_coleta: null,\n                    _skip_llm: true\n                }\n            }];\n        } catch (error) {\n            console.error('❌ Erro ao salvar contas:', error.message);\n            if (error.response) {\n                console.error('Status:', error.response.status);\n                console.error('Body:', JSON.stringify(error.response.body));\n            }\n            return [{\n                json: {\n                    ...input,\n                    acao: 'RESPONDER',\n                    mensagens: [{ conteudo: `Desculpe, houve um erro ao salvar suas contas. Detalhe: ${error.message}.` }]\n                }\n            }];\n        }\n    } else if (msgLower === '2' || msgLower === 'ajustar') {\n        return [{\n            json: {\n                ...input,\n                _estado_coleta: 'aguardando_numeros',\n                _contas_selecionadas: [],\n                _indice_atual: 0,\n                _contas_coletadas: [],\n                acao: 'RESPONDER',\n                mensagens: [{ conteudo: \"Vamos corrigir. Por favor, me informe novamente os números das contas que você quer cadastrar.\" }]\n            }\n        }];\n    } else {\n        return [{\n            json: {\n                ...input,\n                acao: 'RESPONDER',\n                mensagens: [{ conteudo: \"Responda com 1 para Sim ou 2 para Ajustar.\" }]\n            }\n        }];\n    }\n}\n\n// Fallback (nunca deve chegar aqui)\nreturn [{ json: input }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3168,
+        832
+      ],
+      "id": "093e4b2e-2627-42b1-a133-e9be37f32d68",
+      "name": "GERENCIAR COLETA DE CONTAS FIXAS"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VERIFICAR CONFLITO DE HORÁRIO\n// ============================================\n\nconst input = $input.first().json;\n\n// Só verifica conflito se for um agendamento\nif (!input.is_agendamento) {\n    console.log('⏭️ Não é agendamento, ignorando verificação de conflito');\n    return [{ json: input }];\n}\n\n// Se não tem data ou hora, não dá para verificar conflito\nif (!input.data_formatada || !input.hora_formatada) {\n    console.log('⏭️ Agendamento sem data/hora completa, pulando verificação de conflito');\n    return [{ json: input }];\n}\n\nlet agenda = input.agenda_semana || [];\n\n// Se agenda não veio, tenta buscar via HTTP\nif (!agenda.length && input.usuario_id) {\n    try {\n        console.log('🔍 Buscando agenda do usuário para verificar conflito...');\n        const response = await $http.get(`http://data-svc:8000/usuarios/${input.usuario_id}/agendamentos`, {\n            qs: { semana: 'atual' }\n        });\n        agenda = response.json.agendamentos || [];\n        console.log(`✅ Agenda carregada: ${agenda.length} compromissos`);\n    } catch(e) {\n        console.error('❌ Erro ao buscar agenda:', e.message);\n    }\n}\n\n// Função para converter \"HH:MM:SS\" ou \"HH:MM\" para minutos desde meia-noite\nfunction horaParaMinutos(horaStr) {\n    if (!horaStr) return null;\n    const partes = horaStr.split(':');\n    const horas = parseInt(partes[0], 10);\n    const minutos = parseInt(partes[1], 10);\n    return horas * 60 + minutos;\n}\n\n// Função para converter minutos desde meia-noite para \"HH:MM\"\nfunction minutosParaHora(minutos) {\n    const horas = Math.floor(minutos / 60);\n    const mins = minutos % 60;\n    return `${String(horas).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;\n}\n\nconst dataSolicitada = input.data_formatada;\nconst horaSolicitada = input.hora_formatada;\nconst horaMinutos = horaParaMinutos(horaSolicitada);\n\nif (!horaMinutos) {\n    console.log('⚠️ Hora inválida, não é possível verificar conflito');\n    return [{ json: input }];\n}\n\n// Procurar conflito exato\nconst conflito = agenda.find(ag => {\n    const dataAg = ag.data_compromisso.split('T')[0];\n    const horaAg = ag.hora_compromisso;\n    return dataAg === dataSolicitada && horaParaMinutos(horaAg) === horaMinutos;\n});\n\nif (!conflito) {\n    console.log('✅ Nenhum conflito de horário encontrado');\n    return [{ json: input }];\n}\n\n// ===== CONFLITO ENCONTRADO =====\nconsole.log('⚠️ Conflito detectado:', conflito.nome_compromisso);\n\n// Função para formatar horário (ex: \"14:30\")\nfunction formatarHora(horaStr) {\n    if (!horaStr) return '';\n    return horaStr.substring(0, 5);\n}\n\n// Gerar sugestões de horários disponíveis\nfunction gerarSugestoes(data, horaMin, agenda, duracao = 60) {\n    const sugestoes = [];\n    const tentativas = [-90, -60, -30, 30, 60, 90];\n    \n    for (let delta of tentativas) {\n        const novaHora = horaMin + delta;\n        \n        // Validar range 8h-18h (480-1080 minutos)\n        if (novaHora < 480 || novaHora > 1080) continue;\n        \n        // Verificar SOBREPOSIÇÃO\n        const ocupado = agenda.some(ag => {\n            if (ag.data_compromisso.split('T')[0] !== data) return false;\n            \n            const agStart = horaParaMinutos(ag.hora_compromisso);\n            const agEnd = agStart + 60;\n            const novaEnd = novaHora + duracao;\n            \n            return (novaHora < agEnd && novaEnd > agStart);\n        });\n        \n        if (!ocupado) {\n            sugestoes.push({ \n                hora: minutosParaHora(novaHora), \n                delta \n            });\n        }\n        \n        if (sugestoes.length >= 2) break;\n    }\n    \n    return sugestoes;\n}\n\nconst sugestoes = gerarSugestoes(dataSolicitada, horaMinutos, agenda, 60);\n\n// Montar mensagem\nlet mensagemConflito = `${dataSolicitada} às ${formatarHora(horaSolicitada)} já tem:\\n*\"${conflito.nome_compromisso}\"*\\n\\nQue tal?\\n`;\n\nif (sugestoes.length >= 1) {\n    mensagemConflito += `1️⃣ ${dataSolicitada} às ${sugestoes[0].hora}\\n`;\n}\nif (sugestoes.length >= 2) {\n    mensagemConflito += `2️⃣ ${dataSolicitada} às ${sugestoes[1].hora}\\n`;\n}\n\nmensagemConflito += `3️⃣ Cancelar agendamento`;\n// ===== TESTE MANUAL =====\nconsole.log('🧪 Testando gerarSugestoes():');\nconst testeSugestoes = gerarSugestoes(\n    '2026-06-02',\n    840,  // 14:00\n    [{\n        data_compromisso: '2026-06-02T14:00:00',\n        hora_compromisso: '14:00'\n    }],\n    60\n);\nconsole.log('Sugestões de teste:', JSON.stringify(testeSugestoes, null, 2));\n// Retornar resposta\nreturn [{\n    json: {\n        ...input,\n        _skip_llm: true,\n        _conflito: true,\n        acao: 'RESPONDER',\n        mensagens: [{ conteudo: mensagemConflito }],\n        conflito_dados: {\n            original_data: dataSolicitada,\n            original_hora: horaSolicitada,\n            conflito_nome: conflito.nome_compromisso,\n            sugestoes: sugestoes\n        }\n    }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -736,
+        544
+      ],
+      "id": "c6749f30-d472-4600-8016-9832577e051d",
+      "name": "VERIFICAR CONFLITO DE HORÁRIO"
+    },
+    {
+      "parameters": {
+        "jsCode": "// NOVO NÓ: \"Verificar Resposta Agendamento\"\n// Coloque ANTES do Switch Decision\n// Código JavaScript:\n\nconst input = $input.first().json;\n\n// Verifica se tem campos faltando ou está em fluxo de perguntas\nconst camposFaltando = input.campos_faltando || [];\nconst fluxoEstado = input._fluxo_estado || 'normal';\nconst precisaAjuda = input.precisa_ajuda === true;\nconst usuarioConfirmou = ['1', 'sim', 'confirmar'].includes(String(input.mensagem).toLowerCase());\n\n// CASO 1: Usuário respondeu com dados faltantes\nif (camposFaltando.length > 0) {\n  console.log('📝 Ainda faltam campos - continuar conversa');\n  return [{\n    json: {\n      ...input,\n      acao: 'RESPONDER',\n      mensagem: input.resposta_sugerida || `Qual ${camposFaltando[0]}?`\n    }\n  }];\n}\n\n// CASO 2: Usuário confirmou agendamento\nif (fluxoEstado === 'aguardando_confirmacao' && usuarioConfirmou) {\n  console.log('✅ Usuário confirmou - REGISTRAR');\n  return [{\n    json: {\n      ...input,\n      acao: 'REGISTRAR',\n      dados: {\n        usuario_id: input.usuario_id,\n        nome_compromisso: input.nome_compromisso,\n        data_compromisso: input.data_formatada,\n        hora_compromisso: input.hora_formatada,\n        local: input.local,\n        nome_cliente: input.nome_cliente,\n        telefone_cliente: input.telefone_cliente\n      }\n    }\n  }];\n}\n\n// CASO 3: É agendamento mas faltam dados - ir para IA perguntar\nif (input.is_agendamento && precisaAjuda) {\n  console.log('🤔 Agendamento com dados incompletos - IA vai perguntar');\n  return [{\n    json: {\n      ...input,\n      acao: 'RESPONDER'  // Switch vai pegar isso\n    }\n  }];\n}\n\n// CASO 4: Não é agendamento - responder normalmente\nreturn [{ json: input }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        592
+      ],
+      "id": "058b33db-7d32-47a6-8c5a-bf7574667d8a",
+      "name": "Verificar Resposta Agendamento"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NÓ DE PREPROCESSAMENTO - VERSÃO DEFINITIVA\n// ============================================\n\nconst input = $input.first().json;\nconst mensagemUsuario = (input.mensagem || '').trim();\nconst msgLower = mensagemUsuario.toLowerCase();\n\nconsole.log('=========================================');\nconsole.log('📥 PREPROCESSAMENTO - INICIO');\nconsole.log('Mensagem:', mensagemUsuario);\nconsole.log('_fluxo_estado:', input._fluxo_estado);\nconsole.log('_contexto_completo:', JSON.stringify(input._contexto_completo));\nconsole.log('=========================================');\n\n// ============================================\n// 0. SE JÁ ESTAMOS EM UM FLUXO DE AGENDAMENTO (estado guardado)\n// ============================================\nlet fluxoEstado = input._fluxo_estado || null;\nlet contextoParcial = input._contexto_completo || {};\n\nif (fluxoEstado === 'aguardando_dados' && Object.keys(contextoParcial).length > 0) {\n    console.log('🔄 Fluxo de agendamento em andamento');\n    \n    const camposObrigatorios = ['nome_compromisso', 'data', 'hora', 'local'];\n    const faltando = camposObrigatorios.filter(campo => !contextoParcial[campo]);\n    \n    console.log('Campos faltando:', faltando);\n    \n    // Se o único campo faltando é 'local', usa a mensagem como endereço\n    if (faltando.length === 1 && faltando[0] === 'local') {\n        contextoParcial.local = mensagemUsuario;\n        console.log(`✅ Local definido como: \"${mensagemUsuario}\"`);\n    }\n    \n    const aindaFaltando = camposObrigatorios.filter(campo => !contextoParcial[campo]);\n    \n    if (aindaFaltando.length === 0) {\n        fluxoEstado = 'aguardando_confirmacao';\n        console.log('🎯 Todos os campos preenchidos - mudando para AGUARDANDO_CONFIRMACAO');\n    } else {\n        console.log(`⏳ Ainda faltam: ${aindaFaltando.join(', ')}`);\n    }\n    \n    return [{\n        json: {\n            ...input,\n            is_agendamento: true,\n            precisa_ajuda: aindaFaltando.length > 0,\n            campos_faltando: aindaFaltando,\n            _fluxo_estado: fluxoEstado,\n            _contexto_completo: contextoParcial,\n            nome_compromisso: contextoParcial.nome_compromisso,\n            data_formatada: contextoParcial.data,\n            hora_formatada: contextoParcial.hora,\n            local: contextoParcial.local,\n            nome_cliente: contextoParcial.nome_cliente,\n            telefone_cliente: contextoParcial.telefone_cliente,\n            resposta_sugerida: aindaFaltando.length > 0 ? 'Qual o endereço do compromisso?' : ''\n        }\n    }];\n}\n\n// ============================================\n// 1. RECONHECER RESPOSTAS DE CONFIRMAÇÃO\n// ============================================\nif (!fluxoEstado) {\n    try {\n        const memoriaNode = $('Buscar Chat Memory').first().json;\n        const memoria = memoriaNode?.memoria || [];\n        const ultimaResposta = memoria.filter(m => m.role === 'assistant').pop();\n        if (ultimaResposta?.contexto?._fluxo_estado) {\n            fluxoEstado = ultimaResposta.contexto._fluxo_estado;\n            console.log('🔄 Estado restaurado da memória:', fluxoEstado);\n        }\n    } catch(e) {\n        console.log('ℹ️ Sem memória disponível para restaurar estado');\n    }\n}\n\nconst respostasConfirmacao = ['1', 'sim', 'confirmar', '2', 'ajustar', 'cancelar', 'sim, confirma', 'confirma'];\nconst isRespostaConfirmacao = respostasConfirmacao.includes(msgLower) || \n                              (msgLower === '1' && fluxoEstado === 'aguardando_confirmacao');\n\nif (isRespostaConfirmacao && fluxoEstado === 'aguardando_confirmacao') {\n    console.log('🎯 Resposta de confirmacao detectada!');\n    return [{\n        json: {\n            ...input,\n            is_agendamento: true,\n            precisa_ajuda: false,\n            _fluxo_estado: fluxoEstado,\n            _contexto_completo: input._contexto_completo || {}\n        }\n    }];\n}\n\n// ============================================\n// 2. DETECTAR SE É UM NOVO AGENDAMENTO\n// ============================================\nconst palavrasAgendamento = [\n    'agendar', 'marcar', 'criar', 'quero', 'preciso', 'vou ter',\n    'reunião', 'reuniao', 'compromisso', 'visita', 'consulta', \n    'entrega', 'evento', 'encontro', 'agenda', 'marcacao'\n];\n\nconst diasSemana = [\n    'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado', 'sabado', 'domingo',\n    'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira',\n    'amanhã', 'amanha', 'hoje', 'depois', 'amanhã de'\n];\n\n// ✅ ATUALIZADO: Padrões de hora (incluindo só números 7-23)\nconst padraoHora = /\\d{1,2}:\\d{2}|\\d{1,2}h(?:\\d{2})?|\\b([789]|1[0-9]|2[0-3])\\b/;\n\nconst isAgendamento = \n    palavrasAgendamento.some(palavra => msgLower.includes(palavra)) ||\n    diasSemana.some(dia => msgLower.includes(dia)) ||\n    padraoHora.test(mensagemUsuario);\n\nconsole.log('📅 isAgendamento:', isAgendamento);\n\n// ============================================\n// 3. FUNÇÕES DE EXTRAÇÃO (COMPLETAS)\n// ============================================\n\nfunction extrairLocal(msg) {\n    if (!msg) return null;\n    let texto = msg.replace(/^o endereço é\\s+/i, '').replace(/^endereço\\s+/i, '');\n    const patterns = [\n        /(?:na|em|para)\\s+([^,;.!?]+(?:[;,.]\\s*[^,;.!?]+)?)/i,\n        /(Rua|Avenida|Av|Alameda|Praça|Travessa|Beco|Estrada|Sítio|Rodovia)\\s+([^,;.!?]+)/i,\n        /^([A-Z][a-z]+(\\s+[A-Z][a-z]+)*\\s+\\d+)/,\n        /^([a-z\\u00C0-\\u00FF]+(\\s+[a-z\\u00C0-\\u00FF]+)*\\s+\\d+)/i\n    ];\n    for (const pattern of patterns) {\n        const match = texto.match(pattern);\n        if (match) {\n            let endereco = match[1] || match[0];\n            endereco = endereco.trim();\n            if (endereco.length > 3 && endereco.length < 100) return endereco;\n        }\n    }\n    if (texto.length < 50 && !texto.match(/^(1|sim|nao|ok|confirmar)/i)) return texto;\n    return null;\n}\n\nfunction extrairTelefoneCliente(msg) {\n    if (!msg) return null;\n    const patterns = [ /\\(?(\\d{2})\\)?\\s*(\\d{4,5})-?(\\d{4})/, /\\b(1[1-9]|2[1-9]|3[1-9]|4[1-9]|5[1-9]|6[1-9]|7[1-9]|8[1-9]|9[1-9])\\d{8,9}\\b/, /\\b\\d{10,11}\\b/ ];\n    for (const pattern of patterns) {\n        const match = msg.match(pattern);\n        if (match) {\n            let telefone = match[0].replace(/\\D/g, '');\n            if (telefone.length >= 10 && telefone.length <= 11) return telefone;\n        }\n    }\n    return null;\n}\n\nfunction extrairNomeCliente(msg) {\n    if (!msg) return null;\n    const palavrasIgnorar = ['fornecedor', 'cliente', 'paciente', 'profissional', 'pessoa', 'amigo', 'familia', 'empresa'];\n    const palavrasFim = ['amanhã', 'amanha', 'hoje', 'às', 'as', 'telefone', 'fone', 'whatsapp', 'celular', 'email', 'em', 'na', 'no', 'para'];\n    const lookahead = '(?=\\\\s*,?\\\\s*(?:' + palavrasFim.join('|') + '|$))';\n    let match = msg.match(new RegExp('com\\\\s+([A-ZÀ-Ú][a-zà-ú]+\\\\s+[A-ZÀ-Ú][a-zà-ú]+)' + lookahead, 'i'));\n    if (match && match[1]) {\n        let nome = match[1].trim();\n        for (const palavra of palavrasFim) {\n            const idx = nome.toLowerCase().indexOf(palavra);\n            if (idx > 0) nome = nome.substring(0, idx).trim();\n        }\n        const primeiraPalavra = nome.toLowerCase().split(' ')[0];\n        if (!palavrasIgnorar.includes(primeiraPalavra) && nome.length > 2) return nome;\n    }\n    match = msg.match(new RegExp('com\\\\s+([A-ZÀ-Ú][a-zà-ú]+)' + lookahead, 'i'));\n    if (match && match[1]) {\n        let nome = match[1].trim();\n        for (const palavra of palavrasFim) {\n            const idx = nome.toLowerCase().indexOf(palavra);\n            if (idx > 0) nome = nome.substring(0, idx).trim();\n        }\n        if (!palavrasIgnorar.includes(nome.toLowerCase()) && nome.length > 2) return nome;\n    }\n    return null;\n}\n\nfunction extrairData(msg) {\n    if (!msg) return null;\n    const hoje = new Date(); hoje.setHours(0,0,0,0);\n    if (msgLower.includes('hoje')) return hoje.toISOString().split('T')[0];\n    if (msgLower.includes('amanhã') || msgLower.includes('amanha')) {\n        const amanha = new Date(hoje); amanha.setDate(amanha.getDate()+1);\n        return amanha.toISOString().split('T')[0];\n    }\n    if (msgLower.includes('depois de amanhã') || msgLower.includes('depois de amanha')) {\n        const depois = new Date(hoje); depois.setDate(depois.getDate()+2);\n        return depois.toISOString().split('T')[0];\n    }\n    const diasMap = { 'domingo':0, 'segunda':1, 'terça':2, 'quarta':3, 'quinta':4, 'sexta':5, 'sábado':6, 'sabado':6 };\n    for (const [dia, numero] of Object.entries(diasMap)) {\n        if (msgLower.includes(dia)) {\n            const proximoDia = new Date(hoje);\n            let diasAdelantar = numero - proximoDia.getDay();\n            if (diasAdelantar <= 0) diasAdelantar += 7;\n            proximoDia.setDate(proximoDia.getDate() + diasAdelantar);\n            return proximoDia.toISOString().split('T')[0];\n        }\n    }\n    const matchDDMM = msg.match(/(\\d{1,2})\\/(\\d{1,2})/);\n    if (matchDDMM) {\n        const dia = String(matchDDMM[1]).padStart(2,'0');\n        const mes = String(matchDDMM[2]).padStart(2,'0');\n        let ano = hoje.getFullYear();\n        if (parseInt(mes) < hoje.getMonth()+1) ano++;\n        return `${ano}-${mes}-${dia}`;\n    }\n    return null;\n}\n\nfunction extrairHora(msg) {\n    if (!msg) return null;\n    const patterns = [ /(\\d{1,2}):(\\d{2})/, /(\\d{1,2})h(\\d{2})/, /(\\d{1,2})\\s*h(?:oras?)?/i, /às\\s+(\\d{1,2})(?:\\s*h(?:oras?)?)?/i ];\n    for (const pattern of patterns) {\n        const match = msg.match(pattern);\n        if (match) {\n            let hora = String(match[1]).padStart(2,'0');\n            let minuto = match[2] ? String(match[2]).padStart(2,'0') : '00';\n            if (parseInt(hora) >=0 && parseInt(hora) <=23) return `${hora}:${minuto}:00`;\n        }\n    }\n    return null;\n}\n\nfunction extrairNomeCompromisso(msg) {\n    if (!msg) return null;\n    const tipos = ['reunião', 'reuniao', 'consulta', 'entrega', 'visita', 'evento', 'encontro', 'compromisso'];\n    for (const tipo of tipos) {\n        if (msgLower.includes(tipo)) {\n            const matchCom = msg.match(new RegExp(`${tipo}\\\\s+com\\\\s+([A-ZÀ-Ú][a-zà-ú]+(?:\\\\s+[A-ZÀ-Ú][a-zà-ú]+)?)`, 'i'));\n            if (matchCom && matchCom[1]) {\n                let nome = `${tipo.charAt(0).toUpperCase() + tipo.slice(1)} com ${matchCom[1]}`;\n                nome = nome.replace(/\\s+(amanhã|amanha|hoje|às|as|telefone).*$/i, '');\n                return nome;\n            }\n            let nome = tipo.charAt(0).toUpperCase() + tipo.slice(1);\n            nome = nome.replace(/\\s+(amanhã|amanha|hoje|às|as|telefone).*$/i, '');\n            return nome;\n        }\n    }\n    return 'Compromisso';\n}\n\n// ============================================\n// 4. EXTRAIR DADOS DA MENSAGEM ATUAL (novo agendamento)\n// ============================================\nlet nomeCliente = input.nome_cliente || null;\nlet telefoneCliente = input.telefone_cliente || null;\nlet local = input.local || null;\n\nif (!nomeCliente) nomeCliente = extrairNomeCliente(mensagemUsuario);\nif (!telefoneCliente) telefoneCliente = extrairTelefoneCliente(mensagemUsuario);\nif (!local) local = extrairLocal(mensagemUsuario);\n\nconst dataFormatada = extrairData(mensagemUsuario);\nconst horaFormatada = extrairHora(mensagemUsuario);\nlet nomeCompromisso = extrairNomeCompromisso(mensagemUsuario);\n\n// Limpeza\nif (nomeCliente) {\n    nomeCliente = nomeCliente.replace(/\\s+(amanhã|amanha|hoje|às|as|telefone|fone|whatsapp|celular|na|no|para).*$/i, '').trim();\n    const partes = nomeCliente.split(' ');\n    if (partes.length > 2) nomeCliente = partes.slice(0,2).join(' ');\n}\nif (nomeCompromisso) {\n    nomeCompromisso = nomeCompromisso.replace(/\\s+(amanhã|amanha|hoje|às|as|telefone).*$/i, '').trim();\n}\n\n// Mescla com contexto parcial se existir (caso de fluxo contínuo sem estado inicial)\nif (Object.keys(contextoParcial).length > 0) {\n    nomeCompromisso = nomeCompromisso || contextoParcial.nome_compromisso;\n    dataFormatada = dataFormatada || contextoParcial.data;\n    horaFormatada = horaFormatada || contextoParcial.hora;\n    local = local || contextoParcial.local;\n    nomeCliente = nomeCliente || contextoParcial.nome_cliente;\n    telefoneCliente = telefoneCliente || contextoParcial.telefone_cliente;\n}\n\nconst campos = [\n    { nome: 'nome_compromisso', valor: nomeCompromisso, pergunta: 'Qual é o nome do compromisso? (ex: Reunião com João, Consulta médica, Entrega de material)' },\n    { nome: 'data', valor: dataFormatada, pergunta: 'Para qual dia? (hoje, amanhã ou um dia da semana)' },\n    { nome: 'hora', valor: horaFormatada, pergunta: 'Que horas?' },\n    { nome: 'local', valor: local, pergunta: 'Qual o endereço do compromisso?' },\n    { nome: 'nome_cliente', valor: nomeCliente, pergunta: 'Qual o nome do cliente?' },\n    { nome: 'telefone_cliente', valor: telefoneCliente, pergunta: 'Qual o telefone do cliente?' }\n];\nconst camposFaltando = campos.filter(c => !c.valor);\nconst precisaAjuda = camposFaltando.length > 0;\nconst respostaSugerida = precisaAjuda ? camposFaltando[0].pergunta : '';\n\nconsole.log('=== RESULTADO DO PREPROCESSAMENTO ===');\nconsole.log('is_agendamento:', isAgendamento);\nconsole.log('nome_compromisso:', nomeCompromisso);\nconsole.log('data:', dataFormatada);\nconsole.log('hora:', horaFormatada);\nconsole.log('local:', local);\nconsole.log('campos_faltando:', camposFaltando.map(c => c.nome));\nconsole.log('=========================================');\n\nif (!fluxoEstado) {\n    fluxoEstado = precisaAjuda ? 'aguardando_dados' : 'aguardando_confirmacao';\n}\n\nreturn [{\n    json: {\n        ...input,\n        is_agendamento: isAgendamento || fluxoEstado !== 'normal',\n        tem_nome_especifico: !!nomeCompromisso && nomeCompromisso !== 'Compromisso',\n        tem_data: !!dataFormatada,\n        tem_hora: !!horaFormatada,\n        campos_faltando: camposFaltando.map(c => c.nome),\n        precisa_ajuda: precisaAjuda,\n        data_formatada: dataFormatada,\n        hora_formatada: horaFormatada,\n        local: local,\n        telefone_cliente: telefoneCliente,\n        nome_cliente: nomeCliente,\n        nome_compromisso: nomeCompromisso,\n        resposta_sugerida: respostaSugerida,\n        _fluxo_estado: fluxoEstado,\n        _contexto_completo: {\n            nome_compromisso: nomeCompromisso,\n            data: dataFormatada,\n            hora: horaFormatada,\n            local: local,\n            nome_cliente: nomeCliente,\n            telefone_cliente: telefoneCliente\n        }\n    }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2208,
+        592
+      ],
+      "id": "d84d3852-90be-4ed6-b764-21601546007c",
+      "name": "Nó de Preprocessamento"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARAR CONTEXTO UNIFICADO - COM agendamentosOrdenados\n// ============================================\n\nconsole.log('=========================================');\nconsole.log('📥 PREPARAR CONTEXTO UNIFICADO - INICIO');\nconsole.log('=========================================');\n\n// ===== 1. BUSCAR DADOS DE TODOS OS NÓS ANTERIORES =====\nconst inputAtual = $('Mesclar Dados').first().json;\nconst perfil = $('Buscar Perfil MEI').first().json;\nconst agendamentosRaw = $('Buscar Agendamentos').first().json;\nconst agendamentos = agendamentosRaw?.agendamentos || [];\nconst preprocessData = $('Nó de Preprocessamento').first().json;\n\nconsole.log(`   Perfil ID: ${perfil?.id}`);\nconsole.log(`   Agendamentos: ${agendamentos.length}`);\n\n// ===== CORREÇÃO: DEFINIR agendamentosOrdenados AQUI =====\nconst agendamentosOrdenados = [...agendamentos].sort((a, b) => \n    new Date(a.data_compromisso) - new Date(b.data_compromisso)\n);\n// ========================================================\n\n// ===== 2. RECUPERAR CONTEXTO DA CONVERSA ANTERIOR =====\nlet dadosConversa = {};\n// Após obter memoriaAnterior (ex: $('Buscar Chat Memory').first().json)\nlet memoriaAnterior = [];\ntry {\n    const historicoNode = $('Buscar Chat Memory').first().json;\n    memoriaAnterior = historicoNode.memoria || historicoNode || [];\n} catch(e) { /* ... */ }\n\n// Restaura estado da última resposta do assistente\nconst ultimaMsgBot = Array.isArray(memoriaAnterior) \n    ? memoriaAnterior.filter(m => m.role === 'assistant').pop() \n    : null;\n\nif (ultimaMsgBot?.contexto) {\n    const ctx = ultimaMsgBot.contexto;\n    if (ctx._estado_reagendamento) {\n        inputAtual._estado_reagendamento = ctx._estado_reagendamento;\n        inputAtual._agendamento_original = ctx._agendamento_original;\n        inputAtual._acao_reagendamento = ctx._acao_reagendamento;\n        inputAtual._nova_data = ctx._nova_data;\n        inputAtual._nova_hora = ctx._nova_hora;\n        console.log('🔄 Estado de reagendamento restaurado:', ctx._estado_reagendamento);\n    }\n}\n\n// ===== 3. DADOS ATUAIS DO PREPROCESSAMENTO =====\nconst dadosAtuais = {\n    nome_compromisso: preprocessData.nome_compromisso || dadosConversa.nome_compromisso || null,\n    data: preprocessData.data_formatada || dadosConversa.data || null,\n    hora: preprocessData.hora_formatada || dadosConversa.hora || null,\n    local: preprocessData.local || dadosConversa.local || null,\n    nome_cliente: preprocessData.nome_cliente || dadosConversa.nome_cliente || null,\n    telefone_cliente: preprocessData.telefone_cliente || dadosConversa.telefone_cliente || null,\n    precisa_ajuda: preprocessData.precisa_ajuda || false,\n    campos_faltando: preprocessData.campos_faltando || [],\n    resposta_sugerida: preprocessData.resposta_sugerida || ''\n};\n\nconst dadosMesclados = {\n    ...dadosConversa,\n    ...dadosAtuais,\n    _fluxo_estado: dadosConversa._fluxo_estado || preprocessData._fluxo_estado || 'normal'\n};\n\nconsole.log('📝 Dados mesclados:', {\n    precisa_ajuda: dadosMesclados.precisa_ajuda,\n    campos_faltando: dadosMesclados.campos_faltando,\n    _fluxo_estado: dadosMesclados._fluxo_estado\n});\n\n// ===== 4. FUNÇÃO AUXILIAR: CLUSTER =====\nfunction getClusterByTipoNegocio(tipo) {\n    const clusterMap = {\n        'alimentacao': '🍽 COMIDA',\n        'transporte': '🚗 RODAS',\n        'beleza': '✂️ BELEZA & CORPO',\n        'construcao': '🔧 MÃOS À OBRA',\n        'comercio': '🛍 COMÉRCIO',\n        'vendas': '📣 REPRESENTAÇÃO & VENDAS',\n        'marketing': '💻 MARKETING & DIGITAL',\n        'freelancer': '🎯 FREELANCER'\n    };\n    return clusterMap[tipo?.toLowerCase()] || '🛍 COMÉRCIO';\n}\n\n// ===== 5. DADOS DO PERFIL =====\nconst dadosPerfil = perfil || {};\nlet onboardingConcluido = dadosPerfil.interacao_previa === true || dadosPerfil.data_primeiro_contato !== null;\nlet onboardingTimestamp = dadosPerfil.data_primeiro_contato || null;\nlet contasFixas = [];\nlet contasFixasCompleto = dadosPerfil.contas_fixas_completo || false;\n\nif (dadosPerfil.id && !contasFixasCompleto) {\n    try {\n        const contasResp = await $http.get(`http://data-svc:8000/usuarios/${dadosPerfil.id}/contas-recorrentes`);\n        const rawContas = contasResp.body?.contas;\n        if (Array.isArray(rawContas) && rawContas.length > 0) {\n            contasFixasCompleto = true;\n            contasFixas = rawContas;\n        }\n    } catch(e) { console.log('ℹ️ Nenhuma conta fixa registrada'); }\n}\n\nlet janela24h = false;\nif (onboardingTimestamp) {\n    try {\n        const primeiroContato = new Date(onboardingTimestamp);\n        const diffHours = (new Date() - primeiroContato) / (1000 * 60 * 60);\n        janela24h = diffHours <= 24;\n    } catch(e) { janela24h = false; }\n}\n\nconst cluster = dadosPerfil.cluster || getClusterByTipoNegocio(dadosPerfil.tipo_negocio);\nconst clusters = {\n    '🍽 COMIDA': { contas: '1️⃣ Aluguel 2️⃣ Luz 3️⃣ Água 4️⃣ Internet 5️⃣ Gás 6️⃣ Outros' },\n    '🚗 RODAS': { contas: '1️⃣ IPVA 2️⃣ Seguro 3️⃣ Financiamento 4️⃣ Garagem 5️⃣ Outros' },\n    '✂️ BELEZA & CORPO': { contas: '1️⃣ Aluguel da cadeira 2️⃣ Luz 3️⃣ Internet 4️⃣ Outros' },\n    '🔧 MÃOS À OBRA': { contas: '1️⃣ Transporte 2️⃣ Aluguel equipamentos 3️⃣ Outros' },\n    '🛍 COMÉRCIO': { contas: '1️⃣ Aluguel 2️⃣ Luz 3️⃣ Internet 4️⃣ Outros' },\n    '📣 REPRESENTAÇÃO & VENDAS': { contas: '1️⃣ Transporte 2️⃣ Celular 3️⃣ Internet 4️⃣ Outros' },\n    '💻 MARKETING & DIGITAL': { contas: '1️⃣ Ferramentas 2️⃣ Celular 3️⃣ Internet 4️⃣ Outros' },\n    '🎯 FREELANCER': { contas: '1️⃣ Celular 2️⃣ Internet 3️⃣ Ferramentas 4️⃣ Outros' }\n};\nconst regra = clusters[cluster] || clusters['🛍 COMÉRCIO'];\nconst listaContas = regra.contas;\nconst precisaColetarContas = !contasFixasCompleto && janela24h;\nlet mensagemColetaContas = '';\nif (precisaColetarContas) {\n    mensagemColetaContas = `${dadosPerfil.nome || 'MEI'}, uma coisa rápida — pra eu te lembrar das suas contas no dia certo, preciso saber quais você paga todo mês. Quais dessas o ${dadosPerfil.razao_social || dadosPerfil.nome || 'negócio'} tem?\\n\\n${listaContas}\\n\\nMe responde com os números.`;\n}\n\n// ===== 6. FORMATAR AGENDA USANDO agendamentosOrdenados =====\nlet agendaFormatada = '✅ Nenhum compromisso agendado para esta semana.';\nif (agendamentosOrdenados.length > 0) {\n    const diasMap = { 0: 'DOMINGO', 1: 'SEGUNDA', 2: 'TERÇA', 3: 'QUARTA', 4: 'QUINTA', 5: 'SEXTA', 6: 'SÁBADO' };\n    agendaFormatada = '📅 AGENDA DA SEMANA:\\n\\n';\n    agendamentosOrdenados.forEach(ag => {\n        const data = new Date(ag.data_compromisso);\n        const dia = diasMap[data.getDay()];\n        const dataStr = `${data.getDate().toString().padStart(2, '0')}/${(data.getMonth() + 1).toString().padStart(2, '0')}`;\n        const hora = ag.hora_compromisso?.substring(0, 5) || '00:00';\n        agendaFormatada += `${dia} (${dataStr}) - ${hora}\\n   📌 \"${ag.nome_compromisso}\"\\n\\n`;\n    });\n}\n\n// ===== 7. FORMATAR HISTÓRICO =====\nlet historicoFormatado = '📭 Nenhuma conversa anterior.';\ntry {\n    const memory = $('Buscar Chat Memory').item.json?.memoria || [];\n    const mensagensValidas = memory.filter(m => m && m.content && m.content.trim() !== '');\n    if (mensagensValidas.length > 0) {\n        const ultimasMsg = mensagensValidas.slice(-6).map(m => {\n            const emoji = m.role === 'user' ? '👤' : '🤖';\n            const nome = m.role === 'user' ? 'Cliente' : 'MEIrelles';\n            const conteudo = m.content.length > 200 ? m.content.substring(0, 200) + '...' : m.content;\n            return `${emoji} ${nome}: ${conteudo}`;\n        }).reverse().join('\\n');\n        historicoFormatado = ultimasMsg;\n    }\n} catch(e) { console.log('⚠️ Histórico não disponível'); }\n\n// ===== 8. DADOS DO MOMENTO =====\nconst hoje = new Date();\nconst diaSemana = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'][hoje.getDay()];\nconst triggerMensagem = inputAtual.mensagem || inputAtual.Mensagem || '';\nconst triggerTelefone = inputAtual.telefone || inputAtual.phone || inputAtual.numero_telefone || '';\nconst triggerSessionId = inputAtual.session_id || '';\n\n// ===== 9. MONTAR CONTEXTO FINAL =====\nconst contextoFinal = {\n    usuario_id: dadosPerfil.id || 901,\n    nome_mei: dadosPerfil.nome || 'MEI',\n    nome_negocio: dadosPerfil.razao_social || dadosPerfil.nome || 'meu negócio',\n    cluster: cluster,\n    tipo_negocio: dadosPerfil.tipo_negocio || '',\n    data_atual: hoje.toISOString().split('T')[0],\n    dia_semana: diaSemana,\n    horario_trabalho: {\n        dias: dadosPerfil.dias_trabalho || 'segunda a sexta',\n        inicio: dadosPerfil.horario_inicio || '09:00',\n        fim: dadosPerfil.horario_fim || '18:00'\n    },\n    estado_atual: dadosPerfil.estado_atual || 'menu',\n    onboarding_concluido: onboardingConcluido,\n    onboarding_timestamp: onboardingTimestamp,\n    contas_fixas_completo: contasFixasCompleto,\n    contas_fixas: contasFixas,\n    janela_24h: janela24h,\n    chat_memory: memoriaAnterior,\n    agenda_semana: agendamentos,\n    agenda_formatada: agendaFormatada,\n    historico_formatado: historicoFormatado,\n    lista_contas: listaContas,\n    precisa_coletar_contas: precisaColetarContas,\n    mensagem_coleta_contas: mensagemColetaContas,\n    mensagem: triggerMensagem,\n    telefone: triggerTelefone,\n    session_id: triggerSessionId,\n    is_agendamento: preprocessData.is_agendamento || false,\n    precisa_ajuda: dadosMesclados.precisa_ajuda,\n    campos_faltando: dadosMesclados.campos_faltando,\n    resposta_sugerida: dadosMesclados.resposta_sugerida,\n    data_formatada: dadosMesclados.data,\n    hora_formatada: dadosMesclados.hora,\n    nome_cliente: dadosMesclados.nome_cliente,\n    telefone_cliente: dadosMesclados.telefone_cliente,\n    local: dadosMesclados.local,\n    nome_compromisso: dadosMesclados.nome_compromisso,\n    _fluxo_estado: dadosMesclados._fluxo_estado,\n    _contexto_completo: dadosMesclados,\n    _source: 'preparar_contexto_unificado',\n    _timestamp: hoje.toISOString(),\n    _processing_time_ms: Date.now()\n};\n\n// Propagar campos de coleta de contas\nif (inputAtual._estado_coleta !== undefined) contextoFinal._estado_coleta = inputAtual._estado_coleta;\nif (inputAtual._contas_selecionadas !== undefined) contextoFinal._contas_selecionadas = inputAtual._contas_selecionadas;\nif (inputAtual._indice_atual !== undefined) contextoFinal._indice_atual = inputAtual._indice_atual;\nif (inputAtual._contas_coletadas !== undefined) contextoFinal._contas_coletadas = inputAtual._contas_coletadas;\n\nconsole.log('=========================================');\nconsole.log('✅ PREPARAR CONTEXTO UNIFICADO - FINALIZADO');\nconsole.log(`   usuario_id: ${contextoFinal.usuario_id}`);\nconsole.log(`   is_agendamento: ${contextoFinal.is_agendamento}`);\nconsole.log(`   precisa_ajuda: ${contextoFinal.precisa_ajuda}`);\nconsole.log(`   campos_faltando: ${contextoFinal.campos_faltando?.join(', ') || 'nenhum'}`);\nconsole.log(`   _fluxo_estado: ${contextoFinal._fluxo_estado}`);\nconsole.log('=========================================');\n\nreturn [{ json: contextoFinal }];"
+      },
+      "id": "b1ac8193-0b3c-4a29-ad2f-30450fc7d054",
+      "name": "PREPARAR CONTEXTO UNIFICADO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CONTROLE DE HORÁRIO COMERCIAL\n// ============================================\n\nconst input = $input.first().json;\nconst agora = new Date();\nconst hora = agora.getHours();\nconst diaSemana = agora.getDay(); // 0=domingo, 6=sábado\n\nconsole.log('=========================================');\nconsole.log('⏰ CONTROLE DE HORÁRIO');\nconsole.log(`Hora atual: ${hora}`);\nconsole.log(`Dia da semana: ${diaSemana} (0=domingo, 6=sábado)`);\nconsole.log('=========================================');\n\n// Verifica se é horário comercial (8h às 18h, Segunda a Sexta)\nconst isHorarioComercial = (hora >= 8 && hora <= 18) && (diaSemana >= 1 && diaSemana <= 5);\n// const isHorarioComercial = true; // DESCOMENTE ESTA LINHA PARA TESTAR (ignora horário)\n\nif (!isHorarioComercial) {\n    console.log(`⏭️ Fora do horário comercial (${hora}h). Execução ignorada.`);\n    return []; // Retorna vazio, interrompe o fluxo\n}\n\nconsole.log(`✅ Horário comercial (${hora}h). Execução permitida.`);\nreturn [{ json: input }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2496,
+        1024
+      ],
+      "id": "7694ed4a-5575-4448-ab86-659eba04c090",
+      "name": "CONTROLE DE HORÁRIO COMERCIAL"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CONTROLE DE EXECUÇÃO - EVITAR PROCESSAMENTO MÚLTIPLO\n// ============================================\n\nconst hoje = new Date();\nconst hojeStr = hoje.toISOString().split('T')[0];\nconst horaAtual = hoje.getHours();\nconst minutoAtual = hoje.getMinutes();\n\nconsole.log('=========================================');\nconsole.log('⏰ CONTROLE DE EXECUÇÃO');\nconsole.log(`Data/Hora: ${hojeStr} ${horaAtual}:${minutoAtual}`);\nconsole.log('=========================================');\n\n// Controle em memória para evitar execuções duplicadas no mesmo minuto\nif (typeof global === 'undefined') {\n    var global = {};\n}\n\nif (!global.ultimaExecucaoLembrete) {\n    global.ultimaExecucaoLembrete = {};\n}\n\nconst chaveExecucao = `${hojeStr}_${horaAtual}_${Math.floor(minutoAtual / 5) * 5}`; // Agrupa a cada 5 minutos\n\nif (global.ultimaExecucaoLembrete[chaveExecucao]) {\n    console.log(`⏭️ Pular execução: já processada neste intervalo (${chaveExecucao})`);\n    console.log(`   Última execução: ${global.ultimaExecucaoLembrete[chaveExecucao]}`);\n    return []; // Retorna vazio para parar o fluxo\n}\n\n// Marca esta execução\nglobal.ultimaExecucaoLembrete[chaveExecucao] = new Date().toISOString();\nconsole.log(`✅ Execução permitida - marcando: ${chaveExecucao}`);\n\n// Limpa execuções antigas (mais de 1 hora)\nfor (const key in global.ultimaExecucaoLembrete) {\n    const dataExecucao = new Date(global.ultimaExecucaoLembrete[key]);\n    if (Date.now() - dataExecucao.getTime() > 60 * 60 * 1000) {\n        delete global.ultimaExecucaoLembrete[key];\n        console.log(`🧹 Limpando execução antiga: ${key}`);\n    }\n}\n\n// Continua com o fluxo normal\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2720,
+        1024
+      ],
+      "id": "69b4c171-ff45-4c32-b98a-e728b75f1487",
+      "name": "CONTROLE DE EXECUÇÃO - EVITAR PROCESSAMENTO MÚLTIPLO"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// Criar Mensagem Confirmação - VERSÃO COMPLETA\n// ============================================\n\nconst input = $input.first().json;\n\nconsole.log('📝 Criando mensagem de confirmação...');\nconsole.log('📥 Input recebido:', JSON.stringify(input, null, 2));\n\n// ============================================\n// EXTRAIR DADOS DE MÚLTIPLAS FONTES\n// ============================================\n\nlet dadosAgendamento = {};\n\n// Tenta pegar do nó Processar Agendamento Cliente\ntry {\n    const processarNode = $('Processar Agendamento Cliente').first().json;\n    if (processarNode.dados) {\n        dadosAgendamento = processarNode.dados;\n        console.log('✅ Dados do Processar Agendamento Cliente:', dadosAgendamento);\n    } else if (processarNode.agendamento) {\n        dadosAgendamento = processarNode.agendamento;\n    }\n} catch(e) {\n    console.log('⚠️ Processar Agendamento Cliente não disponível:', e.message);\n}\n\n// Tenta pegar do nó Nó de Preprocessamento\ntry {\n    const preprocessNode = $('Nó de Preprocessamento').first().json;\n    if (preprocessNode.telefone_cliente && !dadosAgendamento.telefone_cliente) {\n        dadosAgendamento.telefone_cliente = preprocessNode.telefone_cliente;\n        console.log('✅ Telefone do Preprocessamento:', preprocessNode.telefone_cliente);\n    }\n    if (preprocessNode.nome_cliente && !dadosAgendamento.nome_cliente) {\n        dadosAgendamento.nome_cliente = preprocessNode.nome_cliente;\n        console.log('✅ Nome cliente do Preprocessamento:', preprocessNode.nome_cliente);\n    }\n    if (preprocessNode.local && !dadosAgendamento.local) {\n        dadosAgendamento.local = preprocessNode.local;\n        console.log('✅ Local do Preprocessamento:', preprocessNode.local);\n    }\n    if (preprocessNode.data_formatada && !dadosAgendamento.data_compromisso) {\n        dadosAgendamento.data_compromisso = preprocessNode.data_formatada;\n    }\n    if (preprocessNode.hora_formatada && !dadosAgendamento.hora_compromisso) {\n        dadosAgendamento.hora_compromisso = preprocessNode.hora_formatada;\n    }\n    if (preprocessNode.nome_compromisso && !dadosAgendamento.nome_compromisso) {\n        dadosAgendamento.nome_compromisso = preprocessNode.nome_compromisso;\n    }\n} catch(e) {\n    console.log('⚠️ Preprocessamento não disponível:', e.message);\n}\n\n// Tenta pegar do input direto\nif (!dadosAgendamento.telefone_cliente && input.telefone_cliente) {\n    dadosAgendamento.telefone_cliente = input.telefone_cliente;\n}\nif (!dadosAgendamento.nome_cliente && input.nome_cliente) {\n    dadosAgendamento.nome_cliente = input.nome_cliente;\n}\nif (!dadosAgendamento.local && input.local) {\n    dadosAgendamento.local = input.local;\n}\nif (!dadosAgendamento.data_compromisso && input.data_compromisso) {\n    dadosAgendamento.data_compromisso = input.data_compromisso;\n}\nif (!dadosAgendamento.hora_compromisso && input.hora_compromisso) {\n    dadosAgendamento.hora_compromisso = input.hora_compromisso;\n}\nif (!dadosAgendamento.nome_compromisso && input.nome_compromisso) {\n    dadosAgendamento.nome_compromisso = input.nome_compromisso;\n}\n\n// ============================================\n// DECLARAR VARIÁVEIS (COM NOME DO CLIENTE)\n// ============================================\n\nconst nomeCompromisso = dadosAgendamento.nome_compromisso || input.summary || 'Compromisso';\nconst local = dadosAgendamento.local || input.location || 'Local não informado';\nconst nomeCliente = dadosAgendamento.nome_cliente || 'Não informado';\nconst telefoneCliente = dadosAgendamento.telefone_cliente || dadosAgendamento.telefone || 'Não informado';\nconst dataCompromisso = dadosAgendamento.data_compromisso || 'Data não informada';\nconst horaCompromisso = dadosAgendamento.hora_compromisso || 'Horário não informado';\n\nconsole.log('📋 Dados finais para mensagem:');\nconsole.log(`   nome_compromisso: ${nomeCompromisso}`);\nconsole.log(`   local: ${local}`);\nconsole.log(`   nome_cliente: ${nomeCliente}`);\nconsole.log(`   telefone_cliente: ${telefoneCliente}`);\nconsole.log(`   data: ${dataCompromisso}`);\nconsole.log(`   hora: ${horaCompromisso}`);\n\n// ============================================\n// MONTAR MENSAGEM (COM NOME DO CLIENTE)\n// ============================================\n\nconst mensagem = `✅ *Agendamento confirmado!*\n\n*${nomeCompromisso}*\n👤 Cliente: ${nomeCliente}\n📍 ${local}\n📞 Telefone: ${telefoneCliente}\n📅 ${dataCompromisso} às ${horaCompromisso}\n\n📅 *Link do evento:* ${input.htmlLink || 'Ver no Google Calendar'}\n\n1️⃣ Ver agenda\n2️⃣ Agendar outro\n3️⃣ Cancelar`;\n\n// Telefone do MEI\nlet telefone = dadosAgendamento.telefone_mei || dadosAgendamento.telefone || '5511900000001';\n\nconsole.log('📤 Mensagem de confirmação criada:');\nconsole.log(mensagem);\nconsole.log('📞 Telefone MEI:', telefone);\nconsole.log('👤 Nome Cliente:', nomeCliente);\nconsole.log('📞 Telefone Cliente:', telefoneCliente);\n\nreturn [{\n    json: {\n        message: mensagem,\n        phone: telefone,\n        evento_id: input.id,\n        evento_link: input.htmlLink,\n        nome_compromisso: nomeCompromisso,\n        local: local,\n        nome_cliente: nomeCliente,\n        data: dataCompromisso,\n        hora: horaCompromisso,\n        telefone_cliente: telefoneCliente\n    }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2496,
+        640
+      ],
+      "id": "9eb9ddf7-7596-4792-a3af-757ed62be937",
+      "name": "Criar Mensagem Confirmação"
+    },
+    {
+      "parameters": {
+        "jsCode": "const perfilData = $input.first().json;\n\n// Agora os dados da mensagem vêm diretamente do nó \"When clicking ‘Execute workflow’\"\nlet webhookData = {};\ntry {\n    const triggerNode = $('When clicking ‘Execute workflow’').first().json;\n    webhookData = triggerNode;\n    console.log('✅ Dados obtidos do Manual Trigger:', webhookData);\n} catch (e) {\n    console.log('⚠️ Manual Trigger não encontrado, usando dados padrão');\n    webhookData = {};\n}\n\nconsole.log('📥 Mesclar Dados:');\nconsole.log('  Perfil ID:', perfilData.id);\nconsole.log('  Mensagem:', webhookData.mensagem);\nconsole.log('  Telefone:', webhookData.telefone);\n\nreturn [{\n  json: {\n    id: perfilData.id,\n    nome: perfilData.nome,\n    razao_social: perfilData.razao_social,\n    tipo_negocio: perfilData.tipo_negocio,\n    numero_telefone: perfilData.numero_telefone,\n    \n    mensagem: webhookData.mensagem || '',\n    telefone: webhookData.telefone || perfilData.numero_telefone,\n    telefone_cliente: webhookData.telefone_cliente || null,\n    nome_cliente: webhookData.nome_cliente || null,\n    local: webhookData.local || null,\n    session_id: webhookData.session_id || `session_${Date.now()}`,\n    \n    usuario_id: perfilData.id,\n    _entrada_original: webhookData,\n    _source: 'mesclar_dados',\n    \n    _estado_coleta: webhookData._estado_coleta || null,\n    _contas_selecionadas: webhookData._contas_selecionadas || [],\n    _indice_atual: webhookData._indice_atual || 0,\n    _contas_coletadas: webhookData._contas_coletadas || []\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3328,
+        592
+      ],
+      "id": "003e7f89-63ba-413a-8647-7bf00d50c6ed",
+      "name": "Mesclar Dados"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nó: Garantir Mensagem - VERSÃO CORRIGIDA COM DADOS DO CLIENTE\n// ============================================\n\nconst input = $input.first().json;\n\nconsole.log('📤 Garantir Mensagem - Iniciando...');\nconsole.log('📥 Input recebido:', JSON.stringify(input, null, 2));\n\n// ============================================\n// BUSCAR DADOS DE MÚLTIPLAS FONTES\n// ============================================\n\nlet agendamentoData = {};\nlet dadosUsuario = {};\n\n// Tenta pegar dos dados do agendamento (vem do Processar Agendamento Cliente)\nif (input.dados) {\n    agendamentoData = input.dados;\n    console.log('✅ Dados do agendamento (dados):', agendamentoData);\n} else if (input.agendamento) {\n    agendamentoData = input.agendamento;\n    console.log('✅ Dados do agendamento (agendamento):', agendamentoData);\n} else {\n    agendamentoData = input;\n    console.log('✅ Dados do agendamento (input direto):', agendamentoData);\n}\n\n// Tenta pegar dados do perfil do usuário\ntry {\n    dadosUsuario = $('PREPARAR CONTEXTO UNIFICADO').first().json;\n    console.log('✅ Dados do usuário:', {\n        nome_mei: dadosUsuario.nome_mei,\n        telefone_mei: dadosUsuario.telefone\n    });\n} catch(e) {\n    console.log('⚠️ Dados do usuário não disponíveis');\n}\n\n// Dados da API do Google Calendar (resposta)\nconst dadosApi = input;\n\n// ============================================\n// MONTAR OBJETO FINAL COM TODOS OS DADOS\n// ============================================\n\nconst mergedData = {\n    // Dados do Google Calendar\n    ...dadosApi,\n    \n    // Dados do agendamento (prioridade)\n    nome_compromisso: agendamentoData.nome_compromisso,\n    data_compromisso: agendamentoData.data_compromisso,\n    hora_compromisso: agendamentoData.hora_compromisso,\n    local: agendamentoData.local,\n    telefone_cliente: agendamentoData.telefone_cliente,\n    nome_cliente: agendamentoData.nome_cliente || \"Não informado\",\n    \n    // Dados do MEI\n    nome_mei: dadosUsuario.nome_mei || agendamentoData.nome_mei || \"MEI\",\n    telefone_mei: dadosUsuario.telefone || agendamentoData.telefone_mei || \"Não informado\",\n    usuario_id: agendamentoData.usuario_id || dadosUsuario.usuario_id,\n    \n    // Status\n    status: agendamentoData.status || \"pendente\",\n    evento_id: dadosApi.id,\n    evento_link: dadosApi.htmlLink\n};\n\nconsole.log('📤 Dados mesclados:', {\n    nome_compromisso: mergedData.nome_compromisso,\n    data_compromisso: mergedData.data_compromisso,\n    hora_compromisso: mergedData.hora_compromisso,\n    local: mergedData.local,\n    nome_cliente: mergedData.nome_cliente,\n    telefone_cliente: mergedData.telefone_cliente,\n    nome_mei: mergedData.nome_mei,\n    telefone_mei: mergedData.telefone_mei\n});\n\nreturn { json: mergedData };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3168,
+        640
+      ],
+      "id": "2f30892b-6d79-42cc-81c1-0c7a2f830dba",
+      "name": "Garantir Mensagem"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"summary\": \"{{$json.dados?.nome_compromisso || $json.nome_compromisso || 'Compromisso'}}\",\n  \"description\": \"📋 *DETALHES DO AGENDAMENTO*\\n\\n👤 Cliente: {{$json.dados?.nome_cliente || $json.nome_cliente || 'Cliente'}}\\n📞 Telefone Cliente: {{$json.dados?.telefone_cliente || $json.telefone_cliente || 'Não informado'}}\\n📍 Local: {{$json.dados?.local || $json.local || 'Não informado'}}\\n\\n💼 *Compromisso:* {{$json.dados?.nome_compromisso || $json.nome_compromisso}}\\n📅 Data: {{$json.dados?.data_compromisso || $json.data_compromisso}}\\n⏰ Horário: {{$json.dados?.hora_compromisso || $json.hora_compromisso}}\\n\\n🔔 Lembrete: 15 minutos antes\\n\\n📝 *Observações:*\\n- Cliente agendou via WhatsApp\\n- Endereço confirmado\",\n  \"start\": {\n    \"dateTime\": \"{{($json.dados?.data_compromisso || $json.data_compromisso) + 'T' + ($json.dados?.hora_compromisso || $json.hora_compromisso)}}\",\n    \"timeZone\": \"America/Sao_Paulo\"\n  },\n  \"end\": {\n    \"dateTime\": \"{{($json.dados?.data_compromisso || $json.data_compromisso) + 'T' + ($json.dados?.hora_compromisso || $json.hora_compromisso).substring(0, 5) + ':30'}}\",\n    \"timeZone\": \"America/Sao_Paulo\"\n  },\n  \"location\": \"{{$json.dados?.local || $json.local || ''}}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2272,
+        640
+      ],
+      "id": "375b2748-a172-41f6-95cc-4eb93c6b76b2",
+      "name": "Criar Evento Google Calendar",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "qesFwX13Av3r00Gs",
+          "name": "DATA-SVC API Key"
+        },
+        "googleOAuth2Api": {
+          "id": "R3kzhmiglwWNv6Ve",
+          "name": "Google account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nó: Verificar Token OAuth\nconst input = $input.first().json;\n\nif (input.intent !== 'schedule') return { json: input };\n\n// ============================================\n// 🔧 MOCK PARA TESTE - REMOVER QUANDO OAuth ESTIVER PRONTO\n// ============================================\nconst USE_MOCK = true;  // ⚠️ Mude para false quando OAuth real estiver funcionando\nconst MOCK_USERS = [903, 904, 905]; // Usuários que usarão mock\n\nif (USE_MOCK && MOCK_USERS.includes(Number(input.usuario_id || input.id))) {\n    console.log(`🧪 MOCK: Token OAuth válido para usuário ${input.usuario_id}`);\n    \n    // Mantém a mensagem que já veio do nó anterior\n    // Só adiciona as flags necessárias\n    input.has_google_calendar = true;\n    input.google_token_valid = true;\n    \n    return { json: input };\n}\n// ============================================\n\nconst OATH_SERVICE_URL = 'http://data-svc:8000';\n\ntry {\n    const status = await $http.get(`${OATH_SERVICE_URL}/oauth/status`, {\n        qs: { user_id: input.usuario_id }\n    });\n    \n    input.has_google_calendar = status.json.authorized === true;\n    input.google_token_valid = status.json.token_valid || false;\n    \n    if (!input.has_google_calendar) {\n        input.mensagem_whatsapp = `🔐 *Para agendar automaticamente, conecte sua agenda Google.*\\n\\n` +\n            `É rápido e seguro. Você só precisa autorizar uma vez.\\n\\n` +\n            `🔗 *Clique aqui para conectar:*\\n` +\n            `${OATH_SERVICE_URL}/oauth/authorize?user_id=${input.usuario_id}\\n\\n` +\n            `Depois de autorizar, posso criar eventos automaticamente para você.\\n\\n` +\n            `1️⃣ Quero conectar agora\\n` +\n            `2️⃣ Agendar manualmente\\n` +\n            `3️⃣ Depois`;\n        \n        input.skip_event_creation = true;\n    }\n    \n} catch (error) {\n    console.error('❌ Erro ao verificar token:', error.message);\n    input.has_google_calendar = false;\n}\n\nreturn { json: input };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        640
+      ],
+      "id": "c5692b7b-66c0-441a-aca6-53ea8fbd67d6",
+      "name": "Verificar Token OAuth"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nome: Verificar Google Calendar\n// Modo: Run Once for Each Item\n\nconst input = $input.first().json;\n\n// Só verifica se for agendamento\nif (input.intent !== 'schedule') {\n    console.log('⏭️ Não é agendamento, pulando verificação...');\n    return { json: input };\n}\n\n// ============================================\n// 🔧 CONFIGURAÇÃO DO GOOGLE OAUTH\n// ============================================\nconst CLIENT_ID = '834871901745-mr1apol7pg56dd55j4ci44ntap6ns7s6.apps.googleusercontent.com';\nconst REDIRECT_URI = 'https://data-svc:8000/oauth/callback'; // Ajuste conforme seu serviço\nconst OAUTH_SERVICE_URL = 'http://data-svc:8000';\n\nconst usuario_id = input.usuario_id || input.id;\n\n// 🔧 MOCK para teste (mude para false quando OAuth estiver pronto)\nconst USE_MOCK = true;  // Mantenha true até configurar o serviço OAuth\nconst MOCK_USERS = [903, 904, 905, 46, 42];\n\nif (USE_MOCK && MOCK_USERS.includes(Number(usuario_id))) {\n    console.log(`🧪 MOCK: Google Calendar conectado para usuário ${usuario_id}`);\n    return {\n        json: {\n            ...input,\n            has_google_calendar: true,\n            google_calendar_email: 'teste@meirelles.com',\n            _is_mock: true\n        }\n    };\n}\n\nlet hasGoogleCalendar = false;\nlet googleCalendarEmail = null;\nlet authUrl = null;\n\ntry {\n    console.log(`🔐 Verificando OAuth para usuário ${usuario_id}...`);\n    \n    // Tenta verificar se já tem token ativo\n    const response = await $http.get(`${OAUTH_SERVICE_URL}/oauth/status`, {\n        qs: { user_id: usuario_id }\n    });\n    \n    hasGoogleCalendar = response.json.authorized === true;\n    googleCalendarEmail = response.json.email || null;\n    \n    if (!hasGoogleCalendar) {\n        authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=https://www.googleapis.com/auth/calendar&access_type=offline&state=${usuario_id}`;\n        console.log(`🔗 URL de autorização: ${authUrl}`);\n    }\n    \n} catch(e) {\n    console.error('❌ Erro ao verificar status:', e.message);\n    hasGoogleCalendar = false;\n    authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=https://www.googleapis.com/auth/calendar&access_type=offline&state=${usuario_id}`;\n}\n\nreturn {\n    json: {\n        ...input,\n        has_google_calendar: hasGoogleCalendar,\n        google_calendar_email: googleCalendarEmail,\n        oauth_url: authUrl,\n        _checked_at: new Date().toISOString()\n    }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        640
+      ],
+      "id": "8d90ac2a-af54-4dd4-83d4-0b477154f696",
+      "name": "Verificar Google Calendar"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{$json.agendamento_query}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2944,
+        640
+      ],
+      "id": "fbff8854-fbb2-48d8-9ae8-9f24973949a9",
+      "name": "Salvar Agendamento no Banco",
+      "credentials": {
+        "postgres": {
+          "id": "rXGTo0vnj1yphU2P",
+          "name": "SUPABASE Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// Persistir Agendamento no Banco - V8 CORRIGIDA\n// ============================================\n\nconst input = $input.first().json;\n\n// ============================================\n// VERIFICA SE VEIO UM REGISTRO VÁLIDO DO LLM\n// ============================================\nif (input.acao !== 'REGISTRAR' || !input.dados || Object.keys(input.dados).length === 0) {\n    console.log('⏭️ Não é um agendamento para persistir (acao != REGISTRAR ou dados vazios)');\n    return {\n        json: {\n            ...input,\n            agendamento_query: '-- Nenhum agendamento para persistir',\n            agendamento_status: { \n                skipped: true, \n                reason: 'acao is not REGISTRAR or missing dados' \n            }\n        }\n    };\n}\n\nconsole.log('💾 Persistindo agendamento no banco...');\n\n// ============================================\n// HELPER: Escapar strings SQL\n// ============================================\nfunction escapeSql(str) {\n    if (str === null || str === undefined) return 'NULL';\n    const cleaned = String(str).replace(/'/g, \"''\");\n    return `'${cleaned}'`;\n}\n\n// ============================================\n// HELPER: Converter data para SQL\n// ============================================\nfunction converterDataParaSQL(dataStr) {\n    if (!dataStr || dataStr === '' || dataStr === 'null' || dataStr === null) {\n        return 'NULL::date';\n    }\n    \n    dataStr = String(dataStr).trim();\n    \n    if (dataStr.match(/^\\d{4}-\\d{2}-\\d{2}$/)) {\n        return `'${dataStr}'::date`;\n    }\n    \n    if (dataStr.match(/^\\d{2}\\/\\d{2}\\/\\d{4}$/)) {\n        const partes = dataStr.split('/');\n        const resultado = `${partes[2]}-${partes[1]}-${partes[0]}`;\n        return `'${resultado}'::date`;\n    }\n    \n    if (dataStr.match(/^\\d{2}\\/\\d{2}\\/\\d{2}$/)) {\n        const partes = dataStr.split('/');\n        const ano = `20${partes[2]}`;\n        const resultado = `${ano}-${partes[1]}-${partes[0]}`;\n        return `'${resultado}'::date`;\n    }\n    \n    return 'NULL::date';\n}\n\n// ============================================\n// HELPER: Converter hora para SQL\n// ============================================\nfunction converterHoraParaSQL(horaStr) {\n    if (!horaStr || horaStr === '' || horaStr === 'null' || horaStr === null) {\n        return 'NULL::time';\n    }\n    \n    horaStr = String(horaStr).trim();\n    \n    if (horaStr.match(/^\\d{2}:\\d{2}:\\d{2}$/)) {\n        return `'${horaStr}'::time`;\n    }\n    \n    if (horaStr.match(/^\\d{1,2}:\\d{2}$/)) {\n        return `'${horaStr}:00'::time`;\n    }\n    \n    if (horaStr.match(/^\\d{1,2}h\\d{2}$/)) {\n        const partes = horaStr.split('h');\n        const resultado = `${partes[0].padStart(2, '0')}:${partes[1]}:00`;\n        return `'${resultado}'::time`;\n    }\n    \n    return 'NULL::time';\n}\n\n// ============================================\n// EXTRAIR DADOS - AGORA VINDO DE input.dados\n// ============================================\nconst dadosAgendamento = input.dados;  // <- FONTE PRINCIPAL\n\nconst usuario_id = dadosAgendamento.usuario_id || input.usuario_id || input.id;\nconst nome_compromisso = dadosAgendamento.nome_compromisso || input.nome || 'Compromisso';\nconst data_original = dadosAgendamento.data_compromisso || null;\nconst hora_original = dadosAgendamento.hora_compromisso || null;\nconst local = dadosAgendamento.local || '';\nconst nome_cliente = dadosAgendamento.nome_cliente || '';\nconst telefone_cliente = dadosAgendamento.telefone_cliente || '';\n\n// Tipo de agendamento (inferido do nome do compromisso)\nlet tipo_agendamento = nome_compromisso;\ntipo_agendamento = tipo_agendamento\n    .replace(/\\s+(amanhã|hoje|dia|data|horário|às|aos|as)\\s*/gi, '')\n    .trim();\n\nif (tipo_agendamento.length > 20) {\n    tipo_agendamento = tipo_agendamento.substring(0, 20);\n}\n\nif (tipo_agendamento.length > 0) {\n    tipo_agendamento = tipo_agendamento.charAt(0).toUpperCase() + tipo_agendamento.slice(1);\n}\n\nconst status = dadosAgendamento.status || 'pendente';\n\nconsole.log('📋 Dados extraídos do input.dados:');\nconsole.log(`   usuario_id: ${usuario_id}`);\nconsole.log(`   nome_compromisso: \"${nome_compromisso}\"`);\nconsole.log(`   data_original: ${data_original}`);\nconsole.log(`   hora_original: ${hora_original}`);\nconsole.log(`   local: ${local}`);\nconsole.log(`   nome_cliente: ${nome_cliente}`);\nconsole.log(`   telefone_cliente: ${telefone_cliente}`);\n\n// ============================================\n// CONVERTER PARA SQL\n// ============================================\nconst data_sql = converterDataParaSQL(data_original);\nconst hora_sql = converterHoraParaSQL(hora_original);\n\n// ============================================\n// MONTAR QUERY - COM VERIFICAÇÃO DE DUPLICATA\n// ============================================\nconst query = `\n-- Inserir agendamento (evita duplicata exata pendente)\nINSERT INTO public.agendamentos (\n    usuario_id, \n    nome_compromisso, \n    data_compromisso, \n    hora_compromisso,\n    status, \n    tipo_agendamento, \n    data_criacao, \n    data_modificacao, \n    lembrete_enviado\n)\nSELECT \n    ${usuario_id}, \n    ${escapeSql(nome_compromisso)}, \n    ${data_sql},\n    ${hora_sql},\n    ${escapeSql(status)}, \n    ${escapeSql(tipo_agendamento)},\n    NOW(), \n    NOW(), \n    false\nWHERE NOT EXISTS (\n    SELECT 1 FROM public.agendamentos \n    WHERE usuario_id = ${usuario_id}\n    AND data_compromisso = ${data_sql}\n    AND hora_compromisso = ${hora_sql}\n    AND status = 'pendente'\n)\nRETURNING id;\n`;\n\nconsole.log('📝 Query gerada com sucesso');\nconsole.log(`   Verificando duplicata para ${usuario_id} em ${data_original} às ${hora_original}`);\n\n// ============================================\n// RETORNO (preserva o input original + query)\n// ============================================\nreturn {\n    json: {\n        ...input,\n        agendamento_query: query,\n        agendamento_status: {\n            data_compromisso: data_sql,\n            hora_compromisso: hora_sql,\n            usuario_id: usuario_id,\n            tipo_agendamento: tipo_agendamento,\n            query_ready: true,\n            check_duplicate: true\n        }\n    }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2720,
+        640
+      ],
+      "id": "b7428c99-d9a0-4642-80fe-08c3f1dd6f19",
+      "name": "Persistir Agendamento no Banco"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// Processar Agendamento Cliente - V11 CORRIGIDA\n// Reconhece REGISTRAR com dados como confirmação do LLM\n// ============================================\n\nconst input = $input.first().json;\n\nconsole.log('📅 Processar Agendamento Cliente - Iniciando...');\nconsole.log('📥 Input:', {\n  acao: input.acao,\n  tem_dados: !!input.dados,\n  _skip_ia: input._skip_ia\n});\n\n// ============================================\n// CASO 0: REGISTRAR com DADOS (vindo do LLM)\n// ============================================\n\nif (input.acao === 'REGISTRAR' && input.dados && Object.keys(input.dados).length > 0) {\n  console.log('✅ REGISTRAR com dados completos - passando para persistência');\n  \n  // Passa adiante direto — dados já estão prontos\n  // O Criar Evento Google Calendar e Persistir Agendamento vão usar input.dados\n  return { \n    json: { \n      ...input,\n      _status: 'ready_to_save',\n      _skip_ia: true\n    } \n  };\n}\n\n// ============================================\n// CASO 1: RESPONDER (mensagem do LLM)\n// ============================================\n\nif (input.acao === 'RESPONDER' || (input.mensagens && input.mensagens.length > 0)) {\n  console.log('📝 RESPONDER - extraindo mensagem para WhatsApp');\n  \n  let mensagem = '';\n  if (input.mensagens && input.mensagens[0]?.conteudo) {\n    mensagem = input.mensagens[0].conteudo;\n  } else if (input.message) {\n    mensagem = input.message;\n  }\n  \n  return {\n    json: {\n      ...input,\n      acao: 'RESPONDER',\n      mensagem_whatsapp: mensagem,\n      _skip_ia: true,\n      _final_message: true\n    }\n  };\n}\n\n// ============================================\n// CASO 2: Nada a fazer, passa adiante\n// ============================================\n\nconsole.log('➡️ Nenhuma ação identificada, passando adiante');\nreturn { json: input };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2048,
+        640
+      ],
+      "id": "929cda47-a9ce-4814-a2e4-31fd72ff3b6c",
+      "name": "Processar Agendamento Cliente"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lembretes = $input.all();\nconst resultados = [];\n\n// ============================================\n// DATA REAL (sem simulação)\n// ============================================\nconst hoje = new Date();\nconst hojeStr = hoje.toISOString().split('T')[0];\nconst anoAtual = hoje.getFullYear();\nconst mesAtual = hoje.getMonth() + 1;\nconst diaAtual = hoje.getDate();\n\nconsole.log(`📅 Data atual: ${hojeStr}`);\nconsole.log(`📆 Mês: ${mesAtual}, Dia: ${diaAtual}`);\n\nconst SUPABASE_URL = $env.SUPABASE_URL;\nconst SUPABASE_KEY = $env.SUPABASE_SERVICE_KEY;\n\nif (!SUPABASE_URL || !SUPABASE_KEY) {\n    console.warn('⚠️ SUPABASE_URL ou SUPABASE_SERVICE_KEY não configuradas.');\n}\n\nconsole.log('=========================================');\nconsole.log('🔔 PROCESSAR LEMBRETES');\nconsole.log(`📋 Lembretes do banco: ${lembretes.length}`);\nconsole.log(`📅 Data: ${hojeStr}`);\nconsole.log('=========================================');\n\nasync function verificarSeJaEnviado(usuarioId, tipo, dataReferencia) {\n    if (!SUPABASE_URL || !SUPABASE_KEY) return false;\n    try {\n        const url = `${SUPABASE_URL}/rest/v1/lembrete_controle?usuario_id=eq.${usuarioId}&tipo=eq.${tipo}&data_referencia=eq.${dataReferencia}&select=id`;\n        const response = await $http.get(url, {\n            headers: {\n                'apikey': SUPABASE_KEY,\n                'Authorization': `Bearer ${SUPABASE_KEY}`\n            }\n        });\n        return response.body.length > 0;\n    } catch (error) {\n        console.error('❌ Erro ao verificar lembrete:', error.message);\n        return false;\n    }\n}\n\nasync function marcarComoEnviado(usuarioId, tipo, dataReferencia) {\n    if (!SUPABASE_URL || !SUPABASE_KEY) {\n        console.warn('⚠️ Pulando registro no banco (credenciais ausentes).');\n        return;\n    }\n    try {\n        const url = `${SUPABASE_URL}/rest/v1/lembrete_controle`;\n        await $http.post(url, {\n            usuario_id: usuarioId,\n            tipo: tipo,\n            data_referencia: dataReferencia,\n            enviado_em: new Date().toISOString(),\n            status: 'enviado'\n        }, {\n            headers: {\n                'apikey': SUPABASE_KEY,\n                'Authorization': `Bearer ${SUPABASE_KEY}`,\n                'Content-Type': 'application/json',\n                'Prefer': 'resolution=merge-duplicates'\n            }\n        });\n        console.log(`✅ Registrado no banco: ${usuarioId} - ${tipo} - ${dataReferencia}`);\n    } catch (error) {\n        console.error('❌ Erro ao marcar lembrete como enviado:', error.message);\n    }\n}\n\nlet enviados = 0;\nlet ignorados = 0;\n\nfor (const item of lembretes) {\n    const lembrete = item.json;\n    \n    let dataReferencia = hojeStr;\n    if (lembrete.tipo_lembrete === 'declaracao_anual') {\n        dataReferencia = '2026-05-31';\n    } else if (lembrete.tipo_lembrete === 'das') {\n        dataReferencia = `${anoAtual}-${String(mesAtual).padStart(2,'0')}-20`;\n    } else if (lembrete.tipo_lembrete === 'compromisso') {\n        dataReferencia = lembrete.data_evento?.split('T')[0] || dataReferencia;\n    }\n    \n    const jaEnviado = await verificarSeJaEnviado(lembrete.usuario_id, lembrete.tipo_lembrete, dataReferencia);\n    if (jaEnviado) {\n        console.log(`⏭️ Ignorar: usuário ${lembrete.usuario_id} já recebeu ${lembrete.tipo_lembrete} (${dataReferencia})`);\n        ignorados++;\n        continue;\n    }\n    \n    let mensagem = '';\n    let deveEnviar = false;\n    \n    if (lembrete.tipo_lembrete === 'declaracao_anual') {\n        if (mesAtual === 5) {\n            if (diaAtual === 24) {\n                mensagem = `🔔 ${lembrete.usuario_nome || 'MEI'}, faltam 7 dias:\n*Declaração Anual do MEI*\nVence dia 31 de maio.\n\nVocê mesmo faz em 5 minutos:\n\n1️⃣ Acesse o link abaixo\n2️⃣ Digite seu CNPJ e clique em Continuar\n3️⃣ Informe quanto você faturou no ano:\n   → Vendeu produtos ou fez entregas? Coloca em *Comércio e Indústria*\n   → Prestou serviços? Coloca em *Prestação de Serviços*\n   → Fez os dois? Divide nos dois campos\n\n   💡 *Não sabe o valor exato?*\n   Some o que entrou por mês e multiplica por 12.\n   O limite do MEI é R$ 81.000/ano — equivale a R$ 6.750 por mês.\n\n4️⃣ Responda se teve empregado: Sim ou Não\n5️⃣ Clique em Continuar → Resumo → Conclusão\n\n🔗 https://www.gov.br/empresas-e-negocios/pt-br/declaracao-anual-do-mei\n\nPronto — declaração feita. ✅`;\n                deveEnviar = true;\n            } else if (diaAtual === 30) {\n                mensagem = `🔔 ${lembrete.usuario_nome || 'MEI'}, amanhã vence:\n*Declaração Anual do MEI*\nNão deixa pra última hora. 😄\n\nSe ainda não fez, são só 5 minutos:\n\n1️⃣ Acesse o link abaixo\n2️⃣ Digite seu CNPJ e clique em Continuar\n3️⃣ Informe quanto você faturou no ano:\n   → Vendeu produtos ou fez entregas? Coloca em *Comércio e Indústria*\n   → Prestou serviços? Coloca em *Prestação de Serviços*\n   → Fez os dois? Divide nos dois campos\n\n   💡 *Não sabe o valor exato?*\n   Some o que entrou por mês e multiplica por 12.\n   O limite do MEI é R$ 81.000/ano — equivale a R$ 6.750 por mês.\n\n4️⃣ Responda se teve empregado: Sim ou Não\n5️⃣ Clique em Continuar → Resumo → Conclusão\n\n🔗 https://www.gov.br/empresas-e-negocios/pt-br/declaracao-anual-do-mei\n\nPronto — declaração feita. ✅`;\n                deveEnviar = true;\n            } else if (diaAtual === 31) {\n                mensagem = `🔔 ${lembrete.usuario_nome || 'MEI'}, hoje é o último dia:\n*Declaração Anual do MEI*\nQuem não declara leva multa. Simples assim.\n\nSão só 5 minutos:\n\n1️⃣ Acesse o link abaixo\n2️⃣ Digite seu CNPJ e clique em Continuar\n3️⃣ Informe quanto você faturou no ano:\n   → Vendeu produtos ou fez entregas? Coloca em *Comércio e Indústria*\n   → Prestou serviços? Coloca em *Prestação de Serviços*\n   → Fez os dois? Divide nos dois campos\n\n   💡 *Não sabe o valor exato?*\n   Some o que entrou por mês e multiplica por 12.\n   O limite do MEI é R$ 81.000/ano — equivale a R$ 6.750 por mês.\n\n4️⃣ Responda se teve empregado: Sim ou Não\n5️⃣ Clique em Continuar → Resumo → Conclusão\n\n🔗 https://www.gov.br/empresas-e-negocios/pt-br/declaracao-anual-do-mei\n\nPronto — declaração feita. ✅`;\n                deveEnviar = true;\n            }\n        }\n    } else if (lembrete.tipo_lembrete === 'compromisso') {\n        const dataCompromisso = new Date(lembrete.data_evento);\n        const dataCompromissoStr = dataCompromisso.toISOString().split('T')[0];\n        if (dataCompromissoStr === hojeStr) {\n            const horaCompromisso = lembrete.horario ? lembrete.horario.substring(0, 5) : '--:--';\n            mensagem = `🔔 *LEMBRETE DE COMPROMISSO*\\n\\n\"${lembrete.titulo}\"\\nHoje às ${horaCompromisso}\\n\\n_MEIrelles lembrando você!_ 📅`;\n            deveEnviar = true;\n        }\n    } else if (lembrete.tipo_lembrete === 'das') {\n        if (diaAtual === 20) {\n            mensagem = `🔔 *LEMBRETE DO DAS*\\n\\n${lembrete.usuario_nome}, hoje é dia 20!\\n\\n💰 *${lembrete.titulo}*\\n💵 Valor: R$ 75,00\\n\\n🔗 https://www.gov.br/empresas-e-negocios/pt-br/das\\n\\n_Pague via Pix ou boleto no app do MEI._ 📱`;\n            deveEnviar = true;\n        }\n    }\n    \n    if (deveEnviar && mensagem) {\n        await marcarComoEnviado(lembrete.usuario_id, lembrete.tipo_lembrete, dataReferencia);\n        \n        resultados.push({\n            json: {\n                tipo: lembrete.tipo_lembrete,\n                referencia_id: lembrete.referencia_id,\n                usuario_id: lembrete.usuario_id,\n                phone: lembrete.numero_telefone,\n                message: mensagem,\n                _is_lembrete: true,\n                _data_referencia: dataReferencia,\n                session_id: `lembrete_${lembrete.tipo_lembrete}_${lembrete.usuario_id}_${Date.now()}`\n            }\n        });\n        \n        enviados++;\n        console.log(`📤 Enviando: ${lembrete.tipo_lembrete} para ${lembrete.usuario_nome}`);\n    }\n}\n\nconsole.log('=========================================');\nconsole.log(`📊 RESUMO DA EXECUÇÃO:`);\nconsole.log(`   Lembretes no input: ${lembretes.length}`);\nconsole.log(`   Enviados agora: ${enviados}`);\nconsole.log(`   Ignorados: ${ignorados}`);\nconsole.log(`   Total a enviar: ${resultados.length}`);\nconsole.log('=========================================');\n\nif (resultados.length === 0) {\n    return [{\n        json: {\n            _no_lembrete: true,\n            _mensagem: 'Nenhum lembrete novo',\n            _stats: { enviados: enviados, ignorados: ignorados }\n        }\n    }];\n}\n\nreturn resultados;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3168,
+        1024
+      ],
+      "id": "e379dc8c-e9ea-4d29-8732-1c5455eac1d5",
+      "name": "Processar Lembretes"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        2272,
+        1024
+      ],
+      "id": "b67ea4b3-35c8-4d8b-a432-fb945f66da06",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar Resposta - V2 robusta\n// (o nó Postgres anterior apaga o $json; recupera msg/phone dos branches)\nconst input = $input.first()?.json || {};\n\nconsole.log('📥 Preparar Resposta - input keys:', Object.keys(input));\n\nlet outputMessage = \"\";\nlet phoneNumber = null;\nlet acao = input.acao || \"\";\n\nfunction limparNomeNaMensagem(texto) {\n    if (!texto || typeof texto !== 'string') return texto;\n    return texto\n        .replace(/\\*\"(.+?)(?:\\s+(para|às|as|de|em|no|na))?(\\s*\\*)/gi, (m, nome, sufixo) =>\n            sufixo ? `*\"${nome.trim()}\"*` : m)\n        .replace(/\\s+para\\s*$/gi, '');\n}\n\n// ============================================\n// 1. MENSAGEM — primeiro dos branches (sobrevive ao nó Postgres)\n// ============================================\nfor (const nome of ['PROCESSAR CANCELAMENTO', 'PROCESSAR REAGENDAMENTO']) {\n    try {\n        const j = $(nome).first().json;\n        if (j && j.mensagem_whatsapp) {\n            outputMessage = j.mensagem_whatsapp;\n            acao = 'RESPONDER';\n            break;\n        }\n    } catch (e) { /* nó não rodou nesta execução */ }\n}\n\n// fallback: campos do input atual (fluxo normal / LLM)\nif (!outputMessage) {\n    if (input.mensagens?.[0]?.conteudo) { outputMessage = input.mensagens[0].conteudo; acao = 'RESPONDER'; }\n    else if (input.mensagem_whatsapp)   { outputMessage = input.mensagem_whatsapp;       acao = 'RESPONDER'; }\n    else if (input.message)             { outputMessage = input.message;                 acao = input.acao || 'RESPONDER'; }\n}\n\nif (!outputMessage) {\n    console.warn('⚠️ Nenhuma mensagem encontrada – abortando');\n    return [];\n}\n\noutputMessage = limparNomeNaMensagem(outputMessage);\n\n// ============================================\n// 2. TELEFONE\n// ============================================\nphoneNumber = input.phone || input.telefone || input.numero_telefone || input.phoneNumber || null;\n\nif (!phoneNumber) {\n    for (const nome of ['PROCESSAR CANCELAMENTO', 'PROCESSAR REAGENDAMENTO', 'Mesclar Dados']) {\n        try {\n            const j = $(nome).first().json;\n            phoneNumber = j.telefone || j.numero_telefone || j.phone;\n            if (phoneNumber) break;\n        } catch (e) { /* segue */ }\n    }\n}\n\nif (!phoneNumber) {\n    console.error('❌ Telefone não encontrado. Não envia.');\n    return [];\n}\n\nconsole.log(`📤 phone=${phoneNumber} msg=\"${outputMessage.substring(0, 60)}...\"`);\n\nreturn [{ json: { ...input, message: outputMessage, phone: phoneNumber, acao } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        368
+      ],
+      "id": "7ec1ddd2-1895-4e05-97dd-70847405047a",
+      "name": "Preparar Resposta"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar Payload OpenAI - CORRIGIDO\n// ============================================\n\n// PEGAR DO NÓ CORRETO - MEIrelles - Contexto\nconst dados = $('MEIrelles - Contexto').first().json;\n\nconsole.log('📥 Dados do MEIrelles - Contexto:');\nconsole.log('systemPrompt existe?', !!dados.systemPrompt);\nconsole.log('mensagem:', dados.mensagem);\n\n// Verificar se systemPrompt existe\nif (!dados.systemPrompt) {\n  console.error('❌ systemPrompt é undefined!');\n  \n  // Fallback\n  const fallbackPayload = {\n    model: \"gpt-4o-mini\",\n    max_tokens: 1024,\n    temperature: 0.3,\n    response_format: { type: \"json_object\" },\n    messages: [\n      {\n        role: \"system\",\n        content: \"Você é MEIrelles, secretária de MEI. Responda em JSON.\"\n      },\n      {\n        role: \"user\",\n        content: dados.mensagem || \"Olá\"\n      }\n    ]\n  };\n  \n  return [{ json: fallbackPayload }];\n}\n\nconst systemPromptCompleto = dados.systemPrompt + \"\\n\\n## RESPOSTA OBRIGATÓRIA EM JSON\\nVocê DEVE responder em JSON válido com a estrutura:\\n{\\\"acao\\\":\\\"RESPONDER\\\" ou \\\"REGISTRAR\\\",\\\"mensagens\\\":[...] ou \\\"dados\\\":{...}}\";\n\nconst payload = {\n  model: \"gpt-4o-mini\",\n  max_tokens: 1024,\n  temperature: 0.3,\n  response_format: { type: \"json_object\" },\n  messages: [\n    {\n      role: \"system\",\n      content: systemPromptCompleto\n    },\n    {\n      role: \"user\",\n      content: dados.mensagem\n    }\n  ]\n};\n\nconsole.log('✅ Payload preparado');\nconsole.log('System prompt length:', systemPromptCompleto.length);\nconsole.log('User message:', dados.mensagem);\n\nreturn [{ json: payload }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        592
+      ],
+      "id": "a82816db-561d-43e2-93e5-c01b237b7ac9",
+      "name": "Preparar Payload OpenAI"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// Nó: Preparar Save - VERSÃO CORRIGIDA\n// ============================================\n\nlet mensagem = '';\nlet usuarioId = null;\nlet sessionId = 'default_session';\n\n// ============================================\n// 1. OBTER O ITEM ATUAL (dados de entrada)\n// ============================================\nconst itemAtual = $input.first().json;\n\n// ============================================\n// 2. BUSCAR DADOS DO CONTEXTO UNIFICADO\n// ============================================\nlet contextoUnificado = null;\ntry {\n    contextoUnificado = $('PREPARAR CONTEXTO UNIFICADO').first().json;\n    console.log('📦 Contexto unificado obtido:', {\n        usuario_id: contextoUnificado.usuario_id,\n        nome_mei: contextoUnificado.nome_mei\n    });\n} catch(e) {\n    console.log('⚠️ Não foi possível obter PREPARAR CONTEXTO UNIFICADO:', e.message);\n}\n\n// ============================================\n// 3. BUSCAR A MENSAGEM ENVIADA (prioridade)\n// ============================================\ntry {\n    const sendZApi = $('Send Z-API Responder').first().json;\n    if (sendZApi.message) mensagem = sendZApi.message;\n    console.log('📤 Mensagem obtida do Send Z-API Responder');\n} catch(e) {}\n\nif (!mensagem) {\n    try {\n        const prepararResposta = $('Preparar Resposta').first().json;\n        if (prepararResposta.message) mensagem = prepararResposta.message;\n        console.log('📤 Mensagem obtida do Preparar Resposta');\n    } catch(e) {}\n}\n\nif (!mensagem) {\n    mensagem = itemAtual.message || itemAtual.mensagem || itemAtual.content || '';\n    if (mensagem) console.log('📤 Mensagem obtida do item atual');\n}\n\nif (!mensagem) {\n    console.log('ℹ️ Nenhuma mensagem encontrada – abortando salvamento');\n    return [];\n}\n\n// ============================================\n// 4. OBTER USUARIO_ID E SESSION_ID\n// ============================================\nif (contextoUnificado && contextoUnificado.usuario_id) {\n    usuarioId = contextoUnificado.usuario_id;\n    sessionId = contextoUnificado.session_id || `session_${usuarioId}`;\n    console.log(`🆔 usuario_id do contexto: ${usuarioId}`);\n} else {\n    try {\n        const trigger = $('When clicking \\'Execute workflow\\'').first().json;\n        usuarioId = itemAtual.usuario_id \n                 || itemAtual.id \n                 || trigger.usuario_id \n                 || trigger.perfil?.id \n                 || contextoUnificado?.usuario_id\n                 || 42;\n        sessionId = trigger.session_id || itemAtual.session_id || `session_${usuarioId}`;\n    } catch(e) {\n        usuarioId = itemAtual.usuario_id || itemAtual.id || 42;\n        sessionId = itemAtual.session_id || `session_${usuarioId}`;\n    }\n    console.log(`🆔 usuario_id fallback: ${usuarioId}`);\n}\n\n// ============================================\n// 5. ESCAPAR CONTEÚDO\n// ============================================\nconst contentEscaped = mensagem\n    .replace(/\\\\/g, '\\\\\\\\')\n    .replace(/\"/g, '\\\\\"')\n    .replace(/\\n/g, '\\\\n')\n    .replace(/\\r/g, '\\\\r')\n    .replace(/\\t/g, '\\\\t');\n\n// ============================================\n// 6. RECUPERAR CAMPOS DE ESTADO (coleta)\n// ============================================\nlet estadoColeta = itemAtual._estado_coleta || contextoUnificado?._estado_coleta || null;\nlet contasSelecionadas = itemAtual._contas_selecionadas || contextoUnificado?._contas_selecionadas || [];\nlet indiceAtual = itemAtual._indice_atual || contextoUnificado?._indice_atual || 0;\nlet contasColetadas = itemAtual._contas_coletadas || contextoUnificado?._contas_coletadas || [];\n\n// ============================================\n// 7. RECUPERAR CAMPOS DE REAGENDAMENTO\n// ============================================\nlet estadoReagendamento = itemAtual._estado_reagendamento || contextoUnificado?._estado_reagendamento || null;\nlet agendamentoOriginal = itemAtual._agendamento_original || contextoUnificado?._agendamento_original || null;\nlet acaoReagendamento = itemAtual._acao_reagendamento || contextoUnificado?._acao_reagendamento || null;\nlet novaData = itemAtual._nova_data || contextoUnificado?._nova_data || null;\nlet novaHora = itemAtual._nova_hora || contextoUnificado?._nova_hora || null;\n\n// ============================================\n// 7.5. RECUPERAR CAMPOS DE CANCELAMENTO\n// ============================================\nlet acaoCancelamento = itemAtual._acao_cancelamento || contextoUnificado?._acao_cancelamento || null;\nlet agendamentoParaDeletar = itemAtual._agendamentoParaDeletar || contextoUnificado?._agendamentoParaDeletar || null;\nlet nomeMencionado = itemAtual._nomeMencionado || contextoUnificado?._nomeMencionado || null;\n\n// ============================================\n// 8. RECUPERAR _fluxo_estado (prioridade: itemAtual > contextoUnificado)\n// ============================================\nlet fluxoEstado = itemAtual._fluxo_estado || contextoUnificado?._fluxo_estado || 'normal';\n\n// Se não encontrou, inferir do estado\nif (!itemAtual._fluxo_estado && !contextoUnificado?._fluxo_estado) {\n    if (estadoReagendamento) {\n        fluxoEstado = estadoReagendamento;\n    } else if (acaoCancelamento) {\n        fluxoEstado = 'cancelamento_' + acaoCancelamento;\n    } else if (estadoColeta) {\n        fluxoEstado = 'coleta_' + estadoColeta;\n    } else if (mensagem.includes('Confirma?') || mensagem.includes('confirma?')) {\n        fluxoEstado = 'aguardando_confirmacao';\n    }\n}\n\n// ============================================\n// 9. MONTAR PAYLOAD FINAL (contexto completo)\n// ============================================\nconst payload = {\n    session_id: sessionId,\n    usuario_id: usuarioId,\n    role: \"assistant\",\n    content: contentEscaped,\n    contexto: {\n        // Fluxo geral\n        _fluxo_estado: fluxoEstado,\n        \n        // Estado de coleta\n        _estado_coleta: estadoColeta,\n        _contas_selecionadas: contasSelecionadas,\n        _indice_atual: indiceAtual,\n        _contas_coletadas: contasColetadas,\n        \n        // Estado de reagendamento\n        _estado_reagendamento: estadoReagendamento,\n        _agendamento_original: agendamentoOriginal,\n        _acao_reagendamento: acaoReagendamento,\n        _nova_data: novaData,\n        _nova_hora: novaHora,\n        \n        // Estado de cancelamento\n        _acao_cancelamento: acaoCancelamento,\n        _agendamentoParaDeletar: agendamentoParaDeletar,\n        _nomeMencionado: nomeMencionado\n    }\n};\n\nconsole.log('📝 Mensagem salva:', mensagem.substring(0, 100));\nconsole.log(`📝 Usuario ID: ${usuarioId}, Session ID: ${sessionId}`);\nconsole.log('📝 Contexto:', {\n    fluxo: fluxoEstado,\n    coleta: estadoColeta,\n    reagendamento: estadoReagendamento,\n    cancelamento: acaoCancelamento\n});\n\nreturn [{ json: payload }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3840,
+        736
+      ],
+      "id": "118e946f-88c9-41aa-8a0b-15c71398f19f",
+      "name": "Preparar Save"
+    },
+    {
+      "parameters": {
+        "jsCode": "// MEIrelles - Contexto - V13 COM FLUXO DE PERGUNTAS\nconst contexto = $('PREPARAR CONTEXTO UNIFICADO').first().json;\nconst personalidade = $('MEIrelles - Personalidade').first().json.personalidade;\n\nconsole.log('════════════════════════════════════════');\nconsole.log('🔍 [MEIrelles - Contexto] Iniciando...');\nconsole.log('precisa_ajuda:', contexto.precisa_ajuda);\nconsole.log('campos_faltando:', contexto.campos_faltando);\nconsole.log('_fluxo_estado:', contexto._fluxo_estado);\n\n// ===== RESTAURAR CONTEXTO DE CONVERSA ANTERIOR =====\nlet dadosParciais = {};\nif (contexto._contexto_completo) {\n  dadosParciais = contexto._contexto_completo;\n  console.log('🔄 Dados parciais restaurados:', dadosParciais);\n}\n\n// ===== MESCLAR DADOS NOVOS COM PARCIAIS =====\nconst dadosAtuais = {\n  nome_compromisso: contexto.nome_compromisso || dadosParciais.nome_compromisso,\n  data: contexto.data_formatada || dadosParciais.data,\n  hora: contexto.hora_formatada || dadosParciais.hora,\n  local: contexto.local || dadosParciais.local,\n  nome_cliente: contexto.nome_cliente || dadosParciais.nome_cliente,\n  telefone_cliente: contexto.telefone_cliente || dadosParciais.telefone_cliente\n};\n\n// ===== VERIFICAR CAMPOS AINDA FALTANDO =====\nconst camposCompletos = {\n  nome_compromisso: !!dadosAtuais.nome_compromisso,\n  data: !!dadosAtuais.data,\n  hora: !!dadosAtuais.hora,\n  local: !!dadosAtuais.local,\n  nome_cliente: !!dadosAtuais.nome_cliente,\n  telefone_cliente: !!dadosAtuais.telefone_cliente\n};\n\nconst camposFaltandoAtualizados = Object.keys(camposCompletos).filter(campo => !camposCompletos[campo]);\nconst todosCamposPreenchidos = camposFaltandoAtualizados.length === 0;\n\nconsole.log('📊 Status dos campos:');\nconsole.log('  nome_compromisso:', camposCompletos.nome_compromisso, dadosAtuais.nome_compromisso);\nconsole.log('  data:', camposCompletos.data, dadosAtuais.data);\nconsole.log('  hora:', camposCompletos.hora, dadosAtuais.hora);\nconsole.log('  local:', camposCompletos.local, dadosAtuais.local);\nconsole.log('  nome_cliente:', camposCompletos.nome_cliente, dadosAtuais.nome_cliente);\nconsole.log('  telefone_cliente:', camposCompletos.telefone_cliente, dadosAtuais.telefone_cliente);\n\n// ===== MONTAR MENSAGEM DE ACORDO COM O FLUXO =====\nlet secaoAnalise = \"\";\nlet fluxoEstado = \"normal\";\n\nif (!todosCamposPreenchidos) {\n  // AINDA FALTAM CAMPOS - PERGUNTAR\n  const primeiroCampoFaltando = camposFaltandoAtualizados[0];\n  let perguntaPersonalizada = \"\";\n  \n  switch(primeiroCampoFaltando) {\n    case 'nome_compromisso':\n      perguntaPersonalizada = \"Qual é o nome do compromisso? (ex: Reunião com João, Consulta médica, Entrega de material)\";\n      break;\n    case 'data':\n      perguntaPersonalizada = \"Para qual dia? (hoje, amanhã ou um dia da semana como segunda, terça...)\";\n      break;\n    case 'hora':\n      perguntaPersonalizada = \"Que horas?\";\n      break;\n    case 'local':\n      perguntaPersonalizada = \"Qual o endereço do compromisso?\";\n      break;\n    case 'nome_cliente':\n      perguntaPersonalizada = \"Qual o nome do cliente?\";\n      break;\n    case 'telefone_cliente':\n      perguntaPersonalizada = \"Qual o telefone do cliente?\";\n      break;\n  }\n  \n  secaoAnalise = `## 📊 STATUS ATUAL DO AGENDAMENTO\n- Campos já preenchidos: ${Object.keys(camposCompletos).filter(c => camposCompletos[c]).join(', ') || 'nenhum'}\n- Campos faltando: ${camposFaltandoAtualizados.join(', ')}\n- Próximo campo a perguntar: **${primeiroCampoFaltando}**\n\n## 🎯 AÇÃO OBRIGATÓRIA\nVocê DEVE perguntar ao usuário: \"${perguntaPersonalizada}\"\n\nNÃO confirme o agendamento ainda.\nNÃO registre nada.\nApenas faça essa pergunta específica.`;\n\n  fluxoEstado = \"aguardando_dados\";\n  console.log('❌ Fluxo: Aguardando dados - perguntar:', perguntaPersonalizada);\n  \n} else {\n  // TODOS OS CAMPOS PREENCHIDOS - PEDIR CONFIRMAÇÃO\n  \n  // ===== CORREÇÃO: Calcular referência de data (HOJE/AMANHÃ/DIA DA SEMANA) =====\n  const hoje = new Date();\n  hoje.setHours(0, 0, 0, 0);\n  \n  const dataCompromisso = new Date(dadosAtuais.data + 'T00:00:00');\n  const diffDias = Math.floor((dataCompromisso - hoje) / (1000 * 60 * 60 * 24));\n  \n  let referenciaData = '';\n  if (diffDias === 0) {\n    referenciaData = 'HOJE';\n  } else if (diffDias === 1) {\n    referenciaData = 'AMANHÃ';\n  } else if (diffDias === 2) {\n    referenciaData = 'DEPOIS DE AMANHÃ';\n  } else {\n    const diasSemana = ['DOMINGO', 'SEGUNDA-FEIRA', 'TERÇA-FEIRA', 'QUARTA-FEIRA', 'QUINTA-FEIRA', 'SEXTA-FEIRA', 'SÁBADO'];\n    referenciaData = diasSemana[dataCompromisso.getDay()];\n  }\n  \n  console.log(`📅 Data: ${dadosAtuais.data}, Diferença: ${diffDias} dias, Referência: ${referenciaData}`);\n  \n  secaoAnalise = `## 📊 TODOS OS DADOS COLETADOS\n  \n**DADOS DO AGENDAMENTO:**\n- Nome: ${dadosAtuais.nome_compromisso}\n- Data: ${dadosAtuais.data}\n- Hora: ${dadosAtuais.hora.substring(0, 5)}\n- Local: ${dadosAtuais.local || 'não informado'}\n- Cliente: ${dadosAtuais.nome_cliente || 'não informado'}\n- Telefone: ${dadosAtuais.telefone_cliente || 'não informado'}\n\n## 🎯 AÇÃO OBRIGATÓRIA\nVocê DEVE pedir CONFIRMAÇÃO antes de registrar.\n\nMensagem de confirmação:\n\"Vê se eu entendi certo:\n\n*${dadosAtuais.nome_compromisso}*\n${referenciaData} às ${dadosAtuais.hora.substring(0, 5)}\n📍 ${dadosAtuais.local || 'Local não informado'}\n👤 Cliente: ${dadosAtuais.nome_cliente || 'não informado'}\n📞 Telefone: ${dadosAtuais.telefone_cliente || 'não informado'}\n\nConfirma?\n1️⃣ Sim\n2️⃣ Ajustar\"\n\nNUNCA registre sem confirmação explícita.`;\n\n  fluxoEstado = \"aguardando_confirmacao\";\n  console.log('✅ Fluxo: Aguardando confirmação');\n}\n\n// Verificar se o usuário confirmou na mensagem atual\nconst mensagemUsuario = (contexto.mensagem || '').trim().toLowerCase();\nconst usuarioConfirmou = mensagemUsuario === '1' || mensagemUsuario === 'sim' || mensagemUsuario === 'confirmar';\n\nif (usuarioConfirmou && fluxoEstado === 'aguardando_confirmacao') {\n  secaoAnalise = `## 📊 CONFIRMAÇÃO RECEBIDA\n  \nUsuário confirmou com \"${contexto.mensagem}\".\n\n## 🎯 AÇÃO OBRIGATÓRIA\nVocê DEVE retornar REGISTRAR com os dados abaixo:\n\nDADOS PARA REGISTRAR:\n- usuario_id: ${contexto.usuario_id}\n- nome_compromisso: ${dadosAtuais.nome_compromisso}\n- data_compromisso: ${dadosAtuais.data}\n- hora_compromisso: ${dadosAtuais.hora}\n- local: ${dadosAtuais.local || ''}\n- nome_cliente: ${dadosAtuais.nome_cliente || ''}\n- telefone_cliente: ${dadosAtuais.telefone_cliente || ''}\n- status: \"pendente\"\n\n⚠️ RETORNE REGISTRAR imediatamente.`;\n\n  fluxoEstado = \"registrando\";\n  console.log('🚀 Fluxo: Registrando agendamento');\n}\n\nconst systemPrompt = `${personalidade}\n\n---\n\n## 👤 CLIENTE ATUAL\n**Nome:** ${contexto.nome_mei}\n**Negócio:** ${contexto.nome_negocio}\n**Cluster:** ${contexto.cluster}\n\n---\n\n${secaoAnalise}\n\n${contexto.mensagem_guia_llm || ''}\n\n---\n\n## 📤 FORMATO DE RESPOSTA (OBRIGATÓRIO)\n\n### PARA RESPONDER (perguntar campo faltante):\n{\"acao\":\"RESPONDER\",\"mensagens\":[{\"conteudo\":\"sua mensagem aqui\"}]}\n\n### PARA REGISTRAR (após confirmação):\n{\n  \"acao\": \"REGISTRAR\",\n  \"dados\": {\n    \"usuario_id\": ${contexto.usuario_id},\n    \"nome_compromisso\": \"${dadosAtuais.nome_compromisso}\",\n    \"local\": \"${dadosAtuais.local || ''}\",\n    \"nome_cliente\": \"${dadosAtuais.nome_cliente || ''}\",\n    \"telefone_cliente\": \"${dadosAtuais.telefone_cliente || ''}\",\n    \"data_compromisso\": \"${dadosAtuais.data}\",\n    \"hora_compromisso\": \"${dadosAtuais.hora}\",\n    \"status\": \"pendente\"\n  }\n}\n\n## 💬 MENSAGEM DO USUÁRIO\n${contexto.mensagem}\n\n---\n\n**Responda agora seguindo todas as regras acima.**`;\n\nreturn [{ \n  json: { \n    systemPrompt: systemPrompt,\n    mensagem: contexto.mensagem,\n    _fluxo_estado: fluxoEstado,\n    _contexto_completo: dadosAtuais\n  } \n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        256,
+        592
+      ],
+      "id": "044e5d8d-b55b-4028-9d49-31556f66d21f",
+      "name": "MEIrelles - Contexto"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Preparar Payload OpenAI').first().json) }}",
+        "options": {}
+      },
+      "id": "8002052c-0bd0-4d06-8f51-32134f0db24f",
+      "name": "LLM OpenAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        704,
+        592
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "T12klJl29tEQa6ri",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nó: Pass-through - VERSÃO CORRIGIDA (aceita string array)\n// ============================================\n\nconst input = $input.first().json;\n\nconsole.log('📥 Input do Pass-through:', JSON.stringify(input, null, 2));\n\nlet llmOutput = input;\n\n// Se veio do OpenAI API (HTTP Request node)\nif (input.choices && input.choices[0] && input.choices[0].message) {\n  try {\n    const content = input.choices[0].message.content;\n    console.log('📝 Content do LLM:', content);\n    llmOutput = JSON.parse(content);\n    console.log('✅ Parseado com sucesso:', llmOutput);\n    \n    // ============================================\n    // CORREÇÃO: Se mensagens é array de strings, converte para array de objetos\n    // ============================================\n    if (llmOutput.mensagens && Array.isArray(llmOutput.mensagens)) {\n      // Verifica se o primeiro elemento é string (formato errado)\n      if (llmOutput.mensagens.length > 0 && typeof llmOutput.mensagens[0] === 'string') {\n        console.log('⚠️ Convertendo mensagens de string[] para objeto[]');\n        llmOutput.mensagens = llmOutput.mensagens.map(msg => ({\n          conteudo: msg\n        }));\n      }\n    }\n    \n  } catch(e) {\n    console.log('❌ Erro no parse:', e.message);\n  }\n}\n\n// Se ainda não tem acao, fallback\nif (!llmOutput.acao) {\n  console.log('⚠️ Sem campo \"acao\", usando fallback');\n  return [{\n    json: {\n      acao: \"RESPONDER\",\n      mensagens: [{\n        conteudo: \"Desculpe, não consegui processar sua solicitação. Pode repetir?\"\n      }]\n    }\n  }];\n}\n\nconsole.log('🎯 Repassando para Switch:', llmOutput.acao);\nconsole.log('📦 Mensagens após correção:', JSON.stringify(llmOutput.mensagens));\n\nreturn [{ json: llmOutput }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        592
+      ],
+      "id": "4315f3e7-ffea-45da-ae39-ec53b5457b13",
+      "name": "Pass-through"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://data-svc:8000/usuarios/{{ $json.usuario_id }}/chat-memory",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"session_id\": \"{{ $json.session_id }}\",\n  \"role\": \"{{ $json.role }}\",\n  \"content\": \"{{ $json.content }}\",\n  \"contexto\": {{ JSON.stringify($json.contexto) }}\n}",
+        "options": {}
+      },
+      "id": "42425e52-e2f7-45ad-91b3-7a5024d86fc2",
+      "name": "Save Memory",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        4064,
+        736
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "qesFwX13Av3r00Gs",
+          "name": "DATA-SVC API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://mock:3001/simulate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Client-Token",
+              "value": "=dev-token-local"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "277c43c5-2db8-4436-934d-dbd5cd00a828",
+      "name": "Send Z-API Responder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3392,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.acao }}",
+                    "rightValue": "RESPONDER",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "f05c437b-bd25-47b0-9199-2b3eafa0b477"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "RESPONDER"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.acao }}",
+                    "rightValue": "REGISTRAR",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "7325f8c9-4fde-448c-945b-936cb2b6bdf6"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "REGISTRAR"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "669ba50e-121e-42cd-b343-3520ef7c1154",
+      "name": "Switch Decision",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        1376,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://data-svc:8000/usuarios/{{ $('Buscar Perfil MEI').item.json.id }}/agendamentos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "semana",
+              "value": "atual"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d872cd2f-0036-44b0-abc0-e21ff25c33b3",
+      "name": "Buscar Agendamentos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -3552,
+        592
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "qesFwX13Av3r00Gs",
+          "name": "DATA-SVC API Key"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=http://data-svc:8000/usuarios/{{ $('Buscar Perfil MEI').item.json.id }}/chat-memory",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "=limit",
+              "value": "20"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "801c0968-8a8b-4cf7-bfed-ff4130912e22",
+      "name": "Buscar Chat Memory",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -3104,
+        592
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "qesFwX13Av3r00Gs",
+          "name": "DATA-SVC API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=http://data-svc:8000/usuarios\n",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "telefone",
+              "value": "={{ $json.telefone }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "096d7d2d-c113-4fdc-89ab-fdd7a1110ce9",
+      "name": "Buscar Perfil MEI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -3776,
+        592
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "qesFwX13Av3r00Gs",
+          "name": "DATA-SVC API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst msg = (input.mensagem || '').toLowerCase();\n\nconst isReagendar = /reagendar|remarcar|mudar|alterar|trocar|adiar|transferir/.test(msg);\n\nif (!isReagendar) {\n    return [{ json: { ...input, _acao_reagendamento: null } }];\n}\n\n// Extrai nome do compromisso mencionado\nconst matchNome = msg.match(/(?:reagendar|remarcar)\\s+(?:o\\s+)?(?:compromisso\\s+)?[\"']?(.+?)(?=\\s+(?:para|dia|às|daqui|hoje|amanhã|depois|$))/i);\nconst nomeMencionado = matchNome ? matchNome[1].trim() : null;\n\nconsole.log(`🔄 Reagendamento detectado. Nome: ${nomeMencionado}`);\n\nreturn [{\n    json: {\n        ...input,\n        _acao_reagendamento: 'reagendar',\n        _nome_mencionado: nomeMencionado,\n        _timestamp: new Date().toISOString()\n    }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        256
+      ],
+      "id": "aa824316-bcc7-4b99-b0dd-9557e4a21bb0",
+      "name": "Reconhecer Reagendamento"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PROCESSAR REAGENDAMENTO - VERSÃO COMPLETA\n// ============================================\n\nconst input = $input.first().json;\n\n// Tenta obter estado e agendamento de múltiplas fontes\nlet estado = input._estado_reagendamento;\nlet agendamentoOriginal = input._agendamento_original;\n\nif (!estado && input._entrada_original) {\n    estado = input._entrada_original._estado_reagendamento;\n    agendamentoOriginal = input._entrada_original._agendamento_original;\n}\nif (!estado && input._source) {\n    estado = input._source._estado_reagendamento;\n    agendamentoOriginal = input._source._agendamento_original;\n}\n\nconsole.log(`🔍 Estado: ${estado}`);\n\n// Detecção de novo reagendamento\nif (!estado) {\n    const msg = (input.mensagem || '').toLowerCase();\n    const isReagendar = /reagendar|remarcar|mudar|alterar|adiar|transferir/.test(msg);\n    if (isReagendar) {\n        const matchNome = msg.match(/(?:reagendar|remarcar)\\s+(?:o\\s+)?(?:compromisso\\s+)?[\"']?(.+?)(?=\\s+(?:para|dia|às|daqui|hoje|amanhã|depois|$))/i);\n        const nomeMencionado = matchNome ? matchNome[1].trim() : null;\n        estado = 'buscando_agendamento';\n        input._estado_reagendamento = estado;\n        input._nome_mencionado = nomeMencionado;\n        console.log(`🆕 Novo reagendamento: ${nomeMencionado}`);\n    } else {\n        console.log('⏭️ Ignorar');\n        return [{ json: input }];\n    }\n}\n\n// ============================================\n// FUNÇÕES AUXILIARES\n// ============================================\nfunction extrairData(mensagem) {\n    const hoje = new Date(); hoje.setHours(0,0,0,0);\n    const msgLow = mensagem.toLowerCase();\n    if (msgLow.includes('hoje')) return hoje.toISOString().split('T')[0];\n    if (msgLow.includes('amanhã')) {\n        const amanha = new Date(hoje); amanha.setDate(amanha.getDate()+1);\n        return amanha.toISOString().split('T')[0];\n    }\n    if (msgLow.includes('depois de amanhã')) {\n        const depois = new Date(hoje); depois.setDate(depois.getDate()+2);\n        return depois.toISOString().split('T')[0];\n    }\n    const diasMap = {\n        'domingo':0, 'dom':0, 'segunda':1, 'segunda-feira':1, 'seg':1,\n        'terça':2, 'terça-feira':2, 'ter':2, 'quarta':3, 'quarta-feira':3, 'qua':3,\n        'quinta':4, 'quinta-feira':4, 'qui':4, 'sexta':5, 'sexta-feira':5, 'sex':5,\n        'sábado':6, 'sabado':6, 'sab':6\n    };\n    for (const [dia, num] of Object.entries(diasMap)) {\n        if (msgLow.includes(dia)) {\n            const proximo = new Date(hoje);\n            let diff = num - proximo.getDay();\n            if (diff <= 0) diff += 7;\n            proximo.setDate(proximo.getDate() + diff);\n            return proximo.toISOString().split('T')[0];\n        }\n    }\n    const match = mensagem.match(/(\\d{1,2})\\/(\\d{1,2})(?:\\/(\\d{4}))?/);\n    if (match) {\n        let dia = parseInt(match[1]), mes = parseInt(match[2]);\n        let ano = match[3] ? parseInt(match[3]) : hoje.getFullYear();\n        if (mes < hoje.getMonth()+1 && !match[3]) ano++;\n        return `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;\n    }\n    return null;\n}\n\nfunction extrairHora(mensagem) {\n    const match = mensagem.match(/(\\d{1,2}):(\\d{2})|(\\d{1,2})h(\\d{2})?/);\n    if (match) {\n        let hora = match[1] || match[3];\n        let minuto = match[2] || match[4] || '00';\n        return `${String(hora).padStart(2,'0')}:${String(minuto).padStart(2,'0')}:00`;\n    }\n    return null;\n}\n\n// ============================================\n// FLUXO POR ESTADO\n// ============================================\n\nif (estado === 'buscando_agendamento') {\n    console.log('📌 BUSCANDO_AGENDAMENTO');\n    const agendamentosMock = [{\n        id: 999,\n        nome_compromisso: \"Reunião com Joao\",\n        data_compromisso: \"2026-06-02T00:00:00.000Z\",\n        hora_compromisso: \"10:00:00\"\n    }];\n    const ag = agendamentosMock[0];\n    const dataFormatada = ag.data_compromisso.split('T')[0];\n    const hora = ag.hora_compromisso.substring(0,5);\n    return [{\n        json: {\n            ...input,\n            _estado_reagendamento: 'aguardando_nova_data',\n            _agendamento_original: ag,\n            _estado_para_salvar: {\n                _estado_reagendamento: 'aguardando_nova_data',\n                _agendamento_original: ag\n            },\n            acao: \"RESPONDER\",\n            _skip_llm: true,\n            mensagem_whatsapp: `Encontrei *\"${ag.nome_compromisso}\"* em ${dataFormatada} às ${hora}.\\n\\nQual a nova data e hora? (ex: sexta às 14h)`\n        }\n    }];\n}\n\nif (estado === 'aguardando_nova_data') {\n    console.log('📌 AGUARDANDO_NOVA_DATA');\n    if (!agendamentoOriginal) {\n        return [{\n            json: {\n                ...input,\n                acao: \"RESPONDER\",\n                _skip_llm: true,\n                mensagem_whatsapp: \"Desculpe, perdi o compromisso original.\"\n            }\n        }];\n    }\n    const mensagemUsuario = input.mensagem || input._entrada_original?.mensagem || '';\n    let novaData = extrairData(mensagemUsuario);\n    let novaHora = extrairHora(mensagemUsuario);\n    \n    // Se faltar hora, define 12:00 como padrão (ou você pode perguntar)\n    if (novaData && !novaHora) {\n        novaHora = '12:00:00';\n        console.log('⏰ Hora padrão 12:00');\n    }\n    \n    if (!novaData) {\n        return [{\n            json: {\n                ...input,\n                acao: \"RESPONDER\",\n                _skip_llm: true,\n                mensagem_whatsapp: \"Não entendi a data. Use 'amanhã', 'segunda-feira' ou '10/06'.\"\n            }\n        }];\n    }\n    \n    const dataOriginal = agendamentoOriginal.data_compromisso.split('T')[0];\n    const horaOriginal = agendamentoOriginal.hora_compromisso.substring(0,5);\n    const novaHoraFormatada = novaHora.substring(0,5);\n    const mensagemConfirmacao = `Vê se eu entendi certo:\\n\\n*\"${agendamentoOriginal.nome_compromisso}\"*\\nANTES: ${dataOriginal} às ${horaOriginal}\\nDEPOIS: ${novaData} às ${novaHoraFormatada}\\n\\nConfirma?\\n1️⃣ Sim\\n2️⃣ Ajustar`;\n    \n    return [{\n        json: {\n            ...input,\n            _estado_reagendamento: 'confirmar',\n            _nova_data: novaData,\n            _nova_hora: novaHora,\n            _agendamento_original: agendamentoOriginal,\n            _estado_para_salvar: {\n                _estado_reagendamento: 'confirmar',\n                _nova_data: novaData,\n                _nova_hora: novaHora,\n                _agendamento_original: agendamentoOriginal\n            },\n            acao: \"RESPONDER\",\n            _skip_llm: true,\n            mensagem_whatsapp: mensagemConfirmacao\n        }\n    }];\n}\n\nif (estado === 'confirmar') {\n    console.log('📌 CONFIRMAR');\n    const resposta = (input.mensagem || '').toLowerCase().trim();\n    const confirmado = resposta === '1' || resposta === 'sim' || resposta === 'confirmar';\n    if (!confirmado) {\n        return [{\n            json: {\n                ...input,\n                _estado_reagendamento: null,\n                _estado_para_salvar: null,\n                acao: \"RESPONDER\",\n                _skip_llm: true,\n                mensagem_whatsapp: \"Ok, reagendamento cancelado.\"\n            }\n        }];\n    }\n    console.log(`✅ Reagendado para ${input._nova_data} ${input._nova_hora}`);\n    return [{\n        json: {\n            ...input,\n            _estado_reagendamento: null,\n            _estado_para_salvar: null,\n            acao: \"RESPONDER\",\n            _skip_llm: true,\n            mensagem_whatsapp: \"✅ Reagendado. 📅\"\n        }\n    }];\n}\n\nconsole.log(`⚠️ Estado não reconhecido: ${estado}`);\nreturn [{ json: input }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        256
+      ],
+      "id": "75833b4b-f4cf-40e7-9aa5-2f5b2af77bc2",
+      "name": "PROCESSAR REAGENDAMENTO"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUSCAR AGENDAMENTOS REAGENDAR - CORRIGIDO\n// ============================================\n\nconst input = $input.first().json;\n\nif (input._acao_reagendamento !== 'reagendar') {\n    return [{ json: input }];\n}\n\n// 🔁 MOCK: Usa o _nome_mencionado extraído (sem \"para\")\nconst nomeExtraido = input._nome_mencionado || 'Compromisso';\n\n// Limpar o nome se necessário\nconst nomeLimpo = nomeExtraido\n    .replace(/\\s+(para|amanhã|amanha|hoje|sexta|segunda|terça|quarta|quinta|sábado|sabado|domingo)\\b.*/i, '')\n    .split(' ')\n    .map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())\n    .join(' ');\n\nconst agendamentoFicticio = {\n    id: 999,\n    nome_compromisso: nomeLimpo,  // ✅ USA O NOME EXTRAÍDO\n    data_compromisso: '2026-06-02T00:00:00.000Z',  // Amanhã\n    hora_compromisso: '10:00:00'  // 10h\n};\n\nconsole.log('📋 [MOCK] Nome extraído:', nomeExtraido);\nconsole.log('✨ [MOCK] Nome limpo:', nomeLimpo);\nconsole.log('📋 [MOCK] Retornando agendamento:', agendamentoFicticio.nome_compromisso);\n\nreturn [{\n    json: {\n        ...input,\n        agendamentos: [agendamentoFicticio]\n    }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        256
+      ],
+      "id": "e6961111-0f14-4ced-82b7-ab96c784b0be",
+      "name": "BUSCAR AGENDAMENTOS REAGENDAR"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconsole.log('=== ESTADO RECEBIDO ===');\nconsole.log('_estado_reagendamento:', input._estado_reagendamento);\nconsole.log('_agendamento_original:', input._agendamento_original);\nconsole.log('mensagem:', input.mensagem);\nreturn [{ json: input }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        256,
+        256
+      ],
+      "id": "7cdbe1e9-acfe-4a43-9ba0-9a6044c6c942",
+      "name": "DEBUG - Ver Estado"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(\n    (SELECT estado FROM sessao_estado WHERE session_id = '{{ $json.session_id }}' LIMIT 1),\n    '{}'::jsonb\n) AS estado;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2656,
+        592
+      ],
+      "id": "a60be812-7297-4cff-9f9e-5dd90e3c0f65",
+      "name": "Buscar Estado",
+      "credentials": {
+        "postgres": {
+          "id": "rXGTo0vnj1yphU2P",
+          "name": "SUPABASE Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Resultado da query (estado salvo em sessao_estado)\nconst estadoResult = $input.first().json;\nlet estadoSalvo = estadoResult.estado || {};\n\n// Input original (Mesclar Dados)\nconst inputOriginal = $('Mesclar Dados').first().json;\n\nif (estadoSalvo && Object.keys(estadoSalvo).length > 0) {\n    // Reagendamento\n    if (estadoSalvo._estado_reagendamento) {\n        inputOriginal._estado_reagendamento = estadoSalvo._estado_reagendamento;\n        inputOriginal._agendamento_original   = estadoSalvo._agendamento_original;\n        inputOriginal._nova_data              = estadoSalvo._nova_data;\n        inputOriginal._nova_hora              = estadoSalvo._nova_hora;\n        console.log('🔄 Estado de reagendamento restaurado:', estadoSalvo._estado_reagendamento);\n    }\n    // Cancelamento\n    if (estadoSalvo._acao_cancelamento) {\n        inputOriginal._acao_cancelamento      = estadoSalvo._acao_cancelamento;\n        inputOriginal._agendamentoParaDeletar = estadoSalvo._agendamentoParaDeletar;\n        console.log('🔄 Estado de cancelamento restaurado:', estadoSalvo._acao_cancelamento);\n    }\n} else {\n    console.log('ℹ️ Nenhum estado salvo; usando o input atual.');\n}\n\nreturn [{ json: inputOriginal }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2432,
+        592
+      ],
+      "id": "c17c8d19-ffc2-48fa-a436-e375657a3d5a",
+      "name": "Mesclar Estado com Input"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// Preparar Query SQL - COM VALIDAÇÃO DE SEGURANÇA\n// ============================================\nconst input = $input.first().json;\n\n// 🛡️ Proteção: só gera query se houver estado para salvar\nif (!input._estado_para_salvar) {\n    console.log('⚠️ Nenhum estado para salvar. Pulando query.');\n    return []; // Retorna vazio → o nó Postgres não será executado\n}\n\n// Monta a string do estado (escapando para SQL)\nconst estadoStr = JSON.stringify(input._estado_para_salvar)\n    .replace(/'/g, \"''\")\n    .replace(/\\\\/g, \"\\\\\\\\\");\n\nconst sql = `\nINSERT INTO sessao_estado (session_id, estado, updated_at)\nVALUES ('${input.session_id}', '${estadoStr}'::jsonb, NOW())\nON CONFLICT (session_id) DO UPDATE \nSET estado = EXCLUDED.estado, updated_at = NOW();\n`;\n\ninput._query_sql = sql;\nreturn [{ json: input }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        176
+      ],
+      "id": "9539d865-c9eb-4eb8-8516-0ccc26a8cb76",
+      "name": "Preparar Query SQL"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json._query_sql }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1376,
+        176
+      ],
+      "id": "6fdcb0aa-3603-4352-82f4-19d973d522b7",
+      "name": "Executar Query Estado",
+      "credentials": {
+        "postgres": {
+          "id": "rXGTo0vnj1yphU2P",
+          "name": "SUPABASE Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM sessao_estado WHERE session_id = '{{ $json.session_id }}';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1376,
+        368
+      ],
+      "id": "f601af56-f0e2-42be-ae21-c66035016356",
+      "name": "Deletar Estado",
+      "credentials": {
+        "postgres": {
+          "id": "rXGTo0vnj1yphU2P",
+          "name": "SUPABASE Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.precisa_coletar_contas.toString()}}",
+                    "rightValue": "true",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "d5155be4-fe81-4bfc-aad6-1a38e860d8d4"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "coleta_contas"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "bb0f2612-e796-44f7-a2df-71b4723a0999",
+                    "leftValue": "",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "agenda"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -192,
+        752
+      ],
+      "id": "26e79916-fec8-4ef2-b347-18350c91f46e",
+      "name": "Switch: Coleta Proativa / Agenda Normal"
+    },
+    {
+      "parameters": {
+        "jsCode": "const saida = $input.first().json;\nconsole.log('SAÍDA DO PROCESSAR REAGENDAMENTO:', JSON.stringify(saida, null, 2));\nreturn [{ json: saida }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        256
+      ],
+      "id": "43b19c60-6369-45ad-abcd-90603ed37372",
+      "name": "DEBUG PROCESSAR REAGENDAMENTO"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst msg = (input.mensagem || '').toLowerCase().trim();\n\nconsole.log('🔍 Detectando intenção:', msg);\n\n// ============================================\n// 0. PRIORIDADE: continuação de fluxo em andamento\n//    (estado restaurado de sessao_estado)\n// ============================================\nif (input._acao_cancelamento) {\n    console.log('↩️ Continuação de CANCELAMENTO:', input._acao_cancelamento);\n    return [{ json: { ...input, _intencao: 'cancelamento', _acao: 'cancelar' } }];\n}\nif (input._estado_reagendamento) {\n    console.log('↩️ Continuação de REAGENDAMENTO:', input._estado_reagendamento);\n    return [{ json: { ...input, _intencao: 'reagendamento', _acao: 'reagendar', _acao_reagendamento: 'reagendar' } }];\n}\n\n// ============================================\n// 1. CANCELAMENTO (nova intenção)\n// ============================================\nlet intencao = 'agendamento_normal';\nlet detalhes = {};\n\nconst isCancel = /cancela|remove|deleta|apaga|desmarca|tira|desmarcar/.test(msg);\nif (isCancel) {\n    intencao = 'cancelamento';\n    const match = msg.match(/cancela\\s+(?:a\\s+)?(?:o\\s+)?(.+?)(?:\\s+de|$)/i);\n    detalhes.nome_mencionado = match ? match[1].trim() : null;\n}\n\n// ============================================\n// 2. REAGENDAMENTO\n// ============================================\nconst isReagendar = /reagendar|remarcar|mudar|alterar|trocar|adiar|transferir/.test(msg);\nif (isReagendar && !isCancel) {\n    intencao = 'reagendamento';\n    const match = msg.match(/(?:reagendar|remarcar)\\s+(?:o\\s+)?(?:compromisso\\s+)?(.+?)(?=\\s+(?:para|dia|às|$))/i);\n    detalhes.nome_mencionado = match ? match[1].trim() : null;\n}\n\nreturn [{\n    json: {\n        ...input,\n        _intencao: intencao,\n        _detalhes_intencao: detalhes,\n        _acao: intencao === 'cancelamento' ? 'cancelar'\n             : intencao === 'reagendamento' ? 'reagendar' : null,\n        _acao_reagendamento: intencao === 'reagendamento' ? 'reagendar' : (input._acao_reagendamento || null)\n    }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1984,
+        592
+      ],
+      "id": "d7a1cfc4-1980-48bc-bd97-e81e7492fb4e",
+      "name": "Detectar Intenção"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._intencao }}",
+                    "rightValue": "cancelamento",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "35bbad02-0d0a-4919-be25-775163f42a12"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "cancelamento"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "830bb2b3-79bb-457d-bda8-d07a0bf7ab3e",
+                    "leftValue": "={{ $json._intencao }}",
+                    "rightValue": "Reagendamento",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "reagendamento"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "d063f449-49f9-4a0d-a231-bb46ec74e0bc",
+                    "leftValue": "",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "else"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -1760,
+        576
+      ],
+      "id": "add9cfd8-b2df-4b32-b029-23abe3eb72bd",
+      "name": "Switch Intent"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PROCESSAR REAGENDAMENTO - V3 (3 turnos, sem switch)\n// Gerencia internamente salvar/restaurar estado via _rota\n// ============================================\n\nconst input = $input.first().json;\nconst USE_MOCK = true; // Mude para false em produção\n\n// Recupera estado salvo anteriormente (vindo de sessao_estado via Mesclar Estado com Input)\nlet estado = input._estado_reagendamento || null;\nlet agendamentoOriginal = input._agendamento_original || null;\nlet novaData = input._nova_data || null;\nlet novaHora = input._nova_hora || null;\n\nconsole.log(`🔍 PROCESSAR REAGENDAMENTO - Estado: ${estado}`);\n\n// ============================================\n// FUNÇÕES AUXILIARES\n// ============================================\nfunction extrairData(mensagem) {\n    const hoje = new Date(); hoje.setHours(0,0,0,0);\n    const msgLow = mensagem.toLowerCase();\n    if (msgLow.includes('hoje')) return hoje.toISOString().split('T')[0];\n    if (msgLow.includes('amanhã')) {\n        const amanha = new Date(hoje); amanha.setDate(amanha.getDate()+1);\n        return amanha.toISOString().split('T')[0];\n    }\n    if (msgLow.includes('depois de amanhã')) {\n        const depois = new Date(hoje); depois.setDate(depois.getDate()+2);\n        return depois.toISOString().split('T')[0];\n    }\n    const diasMap = {\n        'domingo':0, 'segunda':1, 'terça':2, 'quarta':3,\n        'quinta':4, 'sexta':5, 'sábado':6, 'sabado':6\n    };\n    for (const [dia, num] of Object.entries(diasMap)) {\n        if (msgLow.includes(dia)) {\n            const proximo = new Date(hoje);\n            let diff = num - proximo.getDay();\n            if (diff <= 0) diff += 7;\n            proximo.setDate(proximo.getDate() + diff);\n            return proximo.toISOString().split('T')[0];\n        }\n    }\n    const match = mensagem.match(/(\\d{1,2})\\/(\\d{1,2})(?:\\/(\\d{4}))?/);\n    if (match) {\n        let dia = parseInt(match[1]), mes = parseInt(match[2]);\n        let ano = match[3] ? parseInt(match[3]) : hoje.getFullYear();\n        if (mes < hoje.getMonth()+1 && !match[3]) ano++;\n        return `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;\n    }\n    return null;\n}\n\nfunction extrairHora(mensagem) {\n    const match = mensagem.match(/(\\d{1,2}):(\\d{2})|(\\d{1,2})h(\\d{2})?/);\n    if (match) {\n        let hora = match[1] || match[3];\n        let minuto = match[2] || match[4] || '00';\n        return `${String(hora).padStart(2,'0')}:${String(minuto).padStart(2,'0')}:00`;\n    }\n    return null;\n}\n\n// ============================================\n// DETECÇÃO DE NOVO REAGENDAMENTO (primeiro turno)\n// ============================================\nif (!estado) {\n    const msg = (input.mensagem || '').toLowerCase();\n    const isReagendar = /reagendar|remarcar|mudar|alterar|adiar|transferir/.test(msg);\n    \n    if (!isReagendar) {\n        return [{ json: input }];\n    }\n    \n    console.log('🔄 Novo reagendamento detectado');\n    \n    // Buscar agendamentos (mock ou real)\n    let agendamentos = [];\n    if (USE_MOCK) {\n        agendamentos = [{\n            id: 999,\n            nome_compromisso: input._nome_mencionado || 'Reunião com João',\n            data_compromisso: '2026-06-02T00:00:00.000Z',\n            hora_compromisso: '10:00:00'\n        }];\n    } else {\n        try {\n            const usuarioId = input.usuario_id || input.id;\n            const resp = await $http.get(`http://data-svc:8000/usuarios/${usuarioId}/agendamentos`, {\n                qs: { semana: 'atual' },\n                headers: { 'X-API-Key': $env.DATA_SVC_API_KEY }\n            });\n            agendamentos = resp.body?.agendamentos || [];\n        } catch(e) {\n            console.error('❌ Erro ao buscar agendamentos:', e.message);\n        }\n    }\n    \n    // Encontrar agendamento pelo nome mencionado\n    let agendamento = null;\n    const nomeMencionado = input._nome_mencionado || '';\n    if (nomeMencionado) {\n        agendamento = agendamentos.find(ag => \n            ag.nome_compromisso.toLowerCase().includes(nomeMencionado.toLowerCase())\n        );\n    }\n    if (!agendamento && agendamentos.length === 1) {\n        agendamento = agendamentos[0];\n    }\n    \n    if (!agendamento) {\n        return [{\n            json: {\n                ...input,\n                acao: 'RESPONDER',\n                _skip_llm: true,\n                mensagem_whatsapp: 'Não encontrei nenhum compromisso futuro para reagendar.',\n                _estado_para_salvar: null,\n                _rota: 'deletar'\n            }\n        }];\n    }\n    \n    const dataOriginal = agendamento.data_compromisso.split('T')[0];\n    const horaOriginal = agendamento.hora_compromisso.substring(0, 5);\n    \n    // Primeiro turno: pedir nova data/hora e salvar estado\n    const estadoSalvar = {\n        _estado_reagendamento: 'aguardando_nova_data',\n        _agendamento_original: agendamento\n    };\n    \n    return [{\n        json: {\n            ...input,\n            acao: 'RESPONDER',\n            _skip_llm: true,\n            mensagem_whatsapp: `Encontrei *\"${agendamento.nome_compromisso}\"* em ${dataOriginal} às ${horaOriginal}.\\n\\nQual a nova data e hora? (ex: sexta às 14h)`,\n            ...estadoSalvar,\n            _estado_para_salvar: estadoSalvar,\n            _rota: 'salvar'\n        }\n    }];\n}\n\n// ============================================\n// TURNO 2: aguardando nova data/hora\n// ============================================\nif (estado === 'aguardando_nova_data') {\n    if (!agendamentoOriginal) {\n        return [{\n            json: {\n                ...input,\n                acao: 'RESPONDER',\n                _skip_llm: true,\n                mensagem_whatsapp: 'Desculpe, perdi o compromisso original. Pode repetir?',\n                _estado_para_salvar: null,\n                _rota: 'deletar'\n            }\n        }];\n    }\n    \n    const mensagemUsuario = input.mensagem || '';\n    let novaDataExtraida = extrairData(mensagemUsuario);\n    let novaHoraExtraida = extrairHora(mensagemUsuario);\n    \n    if (!novaDataExtraida) {\n        return [{\n            json: {\n                ...input,\n                acao: 'RESPONDER',\n                _skip_llm: true,\n                mensagem_whatsapp: 'Não entendi a data. Use \"amanhã\", \"sexta-feira\" ou \"10/06\".'\n            }\n        }];\n    }\n    \n    if (!novaHoraExtraida) {\n        novaHoraExtraida = '12:00:00';\n        console.log('⏰ Hora padrão 12:00');\n    }\n    \n    const dataOriginal = agendamentoOriginal.data_compromisso.split('T')[0];\n    const horaOriginal = agendamentoOriginal.hora_compromisso.substring(0, 5);\n    const novaHoraFormatada = novaHoraExtraida.substring(0, 5);\n    \n    const estadoSalvar = {\n        _estado_reagendamento: 'confirmar',\n        _agendamento_original: agendamentoOriginal,\n        _nova_data: novaDataExtraida,\n        _nova_hora: novaHoraExtraida\n    };\n    \n    return [{\n        json: {\n            ...input,\n            _estado_reagendamento: 'confirmar',\n            _agendamento_original: agendamentoOriginal,\n            _nova_data: novaDataExtraida,\n            _nova_hora: novaHoraExtraida,\n            acao: 'RESPONDER',\n            _skip_llm: true,\n            mensagem_whatsapp: `Vê se eu entendi certo:\\n\\n*\"${agendamentoOriginal.nome_compromisso}\"*\\nANTES: ${dataOriginal} às ${horaOriginal}\\nDEPOIS: ${novaDataExtraida} às ${novaHoraFormatada}\\n\\nConfirma?\\n1️⃣ Sim\\n2️⃣ Ajustar`,\n            _estado_para_salvar: estadoSalvar,\n            _rota: 'salvar'\n        }\n    }];\n}\n\n// ============================================\n// TURNO 3: confirmar reagendamento\n// ============================================\nif (estado === 'confirmar') {\n    const resposta = (input.mensagem || '').toLowerCase().trim();\n    const confirmado = resposta === '1' || resposta === 'sim' || resposta === 'confirmar';\n    \n    if (!confirmado) {\n        return [{\n            json: {\n                ...input,\n                acao: 'RESPONDER',\n                _skip_llm: true,\n                mensagem_whatsapp: 'Ok, reagendamento cancelado.',\n                _estado_reagendamento: null,\n                _estado_para_salvar: null,\n                _rota: 'deletar'\n            }\n        }];\n    }\n    \n    // Executar o reagendamento (DELETE do antigo + INSERT do novo)\n    if (!USE_MOCK) {\n        try {\n            const usuarioId = input.usuario_id || input.id;\n            const agendamentoOriginalObj = input._agendamento_original;\n            \n            // Deletar o antigo\n            await $http.request({\n                method: 'DELETE',\n                url: `http://data-svc:8000/usuarios/${usuarioId}/agendamentos/${agendamentoOriginalObj.id}`,\n                headers: { 'X-API-Key': $env.DATA_SVC_API_KEY }\n            });\n            \n            // Criar o novo\n            await $http.request({\n                method: 'POST',\n                url: `http://data-svc:8000/usuarios/${usuarioId}/agendamentos`,\n                body: {\n                    nome_compromisso: agendamentoOriginalObj.nome_compromisso,\n                    data_compromisso: input._nova_data,\n                    hora_compromisso: input._nova_hora,\n                    status: 'pendente'\n                },\n                headers: { 'X-API-Key': $env.DATA_SVC_API_KEY, 'Content-Type': 'application/json' }\n            });\n        } catch(e) {\n            console.error('❌ Erro ao reagendar:', e.message);\n            return [{\n                json: {\n                    ...input,\n                    acao: 'RESPONDER',\n                    _skip_llm: true,\n                    mensagem_whatsapp: 'Deu erro ao reagendar. Tenta de novo?',\n                    _estado_para_salvar: null,\n                    _rota: 'deletar'\n                }\n            }];\n        }\n    }\n    \n    return [{\n        json: {\n            ...input,\n            acao: 'RESPONDER',\n            _skip_llm: true,\n            mensagem_whatsapp: '✅ Reagendado. 📅',\n            _estado_reagendamento: null,\n            _estado_para_salvar: null,\n            _rota: 'deletar'\n        }\n    }];\n}\n\n// Fallback\nreturn [{ json: input }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -912,
+        672
+      ],
+      "id": "a53e7a56-4fe7-426e-baef-6011ab7057a2",
+      "name": "PROCESSAR CANCELAMENTO"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst temEstado = input._estado_para_salvar !== undefined && input._estado_para_salvar !== null;\n\n// Adiciona uma flag para roteamento\ninput._rota = temEstado ? 'salvar' : 'deletar';\n\nreturn [{ json: input }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        272
+      ],
+      "id": "040d81a4-dd05-4b08-8cdb-7b070f76b778",
+      "name": "ROTEADOR DE ESTADO"
+    }
+  ],
+  "pinData": {
+    "When clicking ‘Execute workflow’": [
+      {
+        "json": {
+          "telefone": "5511900000001",
+          "mensagem": "10",
+          "session_id": "teste_agendamento"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "BUSCAR AGENDAMENTOS CANCELAR": {
+      "main": [
+        [
+          {
+            "node": "PROCESSAR CANCELAMENTO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconhecer Cancelamento": {
+      "main": [
+        [
+          {
+            "node": "BUSCAR AGENDAMENTOS CANCELAR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obter os dados da memória (saída do HTTP Request)": {
+      "main": [
+        [
+          {
+            "node": "Buscar Estado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Buscar Perfil MEI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Lembretes Pendentes": {
+      "main": [
+        [
+          {
+            "node": "Processar Lembretes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MEIrelles - Personalidade": {
+      "main": [
+        [
+          {
+            "node": "MEIrelles - Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GERENCIAR COLETA DE CONTAS FIXAS": {
+      "main": [
+        [
+          {
+            "node": "Send Z-API Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VERIFICAR CONFLITO DE HORÁRIO": {
+      "main": [
+        []
+      ]
+    },
+    "Verificar Resposta Agendamento": {
+      "main": [
+        [
+          {
+            "node": "Switch Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nó de Preprocessamento": {
+      "main": [
+        [
+          {
+            "node": "Detectar Intenção",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PREPARAR CONTEXTO UNIFICADO": {
+      "main": [
+        [
+          {
+            "node": "Switch: Coleta Proativa / Agenda Normal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CONTROLE DE HORÁRIO COMERCIAL": {
+      "main": [
+        [
+          {
+            "node": "CONTROLE DE EXECUÇÃO - EVITAR PROCESSAMENTO MÚLTIPLO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CONTROLE DE EXECUÇÃO - EVITAR PROCESSAMENTO MÚLTIPLO": {
+      "main": [
+        [
+          {
+            "node": "Buscar Lembretes Pendentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mescla a resposta da API": {
+      "main": [
+        [
+          {
+            "node": "Preparar Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Mensagem Confirmação": {
+      "main": [
+        [
+          {
+            "node": "Persistir Agendamento no Banco",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mesclar Dados": {
+      "main": [
+        [
+          {
+            "node": "Buscar Chat Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Garantir Mensagem": {
+      "main": [
+        [
+          {
+            "node": "Send Z-API Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Evento Google Calendar": {
+      "main": [
+        [
+          {
+            "node": "Criar Mensagem Confirmação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar Token OAuth": {
+      "main": [
+        [
+          {
+            "node": "Processar Agendamento Cliente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar Google Calendar": {
+      "main": [
+        [
+          {
+            "node": "Verificar Token OAuth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salvar Agendamento no Banco": {
+      "main": [
+        [
+          {
+            "node": "Garantir Mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persistir Agendamento no Banco": {
+      "main": [
+        [
+          {
+            "node": "Salvar Agendamento no Banco",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processar Agendamento Cliente": {
+      "main": [
+        [
+          {
+            "node": "Criar Evento Google Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processar Lembretes": {
+      "main": [
+        [
+          {
+            "node": "Send Z-API Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "CONTROLE DE HORÁRIO COMERCIAL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Resposta": {
+      "main": [
+        [
+          {
+            "node": "Send Z-API Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Payload OpenAI": {
+      "main": [
+        [
+          {
+            "node": "LLM OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MEIrelles - Contexto": {
+      "main": [
+        [
+          {
+            "node": "Preparar Payload OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Pass-through",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pass-through": {
+      "main": [
+        [
+          {
+            "node": "Verificar Resposta Agendamento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Save": {
+      "main": [
+        [
+          {
+            "node": "Save Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Z-API Responder": {
+      "main": [
+        [
+          {
+            "node": "Mescla a resposta da API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Decision": {
+      "main": [
+        [
+          {
+            "node": "Preparar Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Verificar Google Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Agendamentos": {
+      "main": [
+        [
+          {
+            "node": "Mesclar Dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Chat Memory": {
+      "main": [
+        [
+          {
+            "node": "Obter os dados da memória (saída do HTTP Request)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Perfil MEI": {
+      "main": [
+        [
+          {
+            "node": "Buscar Agendamentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconhecer Reagendamento": {
+      "main": [
+        [
+          {
+            "node": "BUSCAR AGENDAMENTOS REAGENDAR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PROCESSAR REAGENDAMENTO": {
+      "main": [
+        [
+          {
+            "node": "DEBUG PROCESSAR REAGENDAMENTO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BUSCAR AGENDAMENTOS REAGENDAR": {
+      "main": [
+        [
+          {
+            "node": "DEBUG - Ver Estado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DEBUG - Ver Estado": {
+      "main": [
+        [
+          {
+            "node": "PROCESSAR REAGENDAMENTO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Estado": {
+      "main": [
+        [
+          {
+            "node": "Mesclar Estado com Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mesclar Estado com Input": {
+      "main": [
+        [
+          {
+            "node": "Nó de Preprocessamento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Query SQL": {
+      "main": [
+        [
+          {
+            "node": "Executar Query Estado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch: Coleta Proativa / Agenda Normal": {
+      "main": [
+        [
+          {
+            "node": "GERENCIAR COLETA DE CONTAS FIXAS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "MEIrelles - Personalidade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DEBUG PROCESSAR REAGENDAMENTO": {
+      "main": [
+        [
+          {
+            "node": "ROTEADOR DE ESTADO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executar Query Estado": {
+      "main": [
+        [
+          {
+            "node": "Preparar Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deletar Estado": {
+      "main": [
+        [
+          {
+            "node": "Preparar Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detectar Intenção": {
+      "main": [
+        [
+          {
+            "node": "Switch Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Intent": {
+      "main": [
+        [
+          {
+            "node": "Reconhecer Cancelamento",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reconhecer Reagendamento",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "PREPARAR CONTEXTO UNIFICADO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PROCESSAR CANCELAMENTO": {
+      "main": [
+        [
+          {
+            "node": "ROTEADOR DE ESTADO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ROTEADOR DE ESTADO": {
+      "main": [
+        [
+          {
+            "node": "Preparar Query SQL",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Deletar Estado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timeSavedMode": "fixed",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "3fb136b1-6b4c-46fa-bca8-d6927294abed",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ee127726705e8849138e1ada1ad7fbd3c30bf6d7e1edccb366ac196ffbbf831f"
+  },
+  "id": "9rDAWM2AaAijBoPc",
+  "tags": []
+}
