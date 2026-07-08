@@ -1,14 +1,14 @@
 from psycopg2.extras import RealDictCursor
 
 
-def fetch_memoria_24h(conn, usuario_id: int, limit: int = 50) -> dict:
+def fetch_memoria_48h(conn, usuario_id: int, limit: int = 50) -> dict:
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
             SELECT papel, conteudo, criado_em
             FROM chat_memory
             WHERE usuario_id = %s
-              AND criado_em > NOW() - INTERVAL '1 day'
+              AND criado_em > NOW() - INTERVAL '2 days'
             ORDER BY criado_em ASC
             LIMIT %s
             """,

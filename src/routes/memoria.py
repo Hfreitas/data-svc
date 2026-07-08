@@ -17,7 +17,7 @@ def get_memoria(id):
     if cached:
         return ok(200, cached)
     with get_db_conn() as conn:
-        resultado = queries.fetch_memoria_24h(conn, id, limit)
+        resultado = queries.fetch_memoria_48h(conn, id, limit)
     cache_set("memoria", cache_key, resultado, ttl=60)
     return ok(200, resultado)
 

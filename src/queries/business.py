@@ -31,15 +31,15 @@ def get_contexto_usuario(conn, usuario_id: int) -> dict | None:
                 WHEN u.descricao_negocio IS NULL OR u.descricao_negocio = '' THEN 'descricao_negocio'
                 ELSE NULL
             END AS proximo_campo_fila,
-            -- status_trial derivado de assinaturas
+            -- status_trial derivado de assinaturas (schema Asaas-nativo)
             CASE
                 WHEN EXISTS (
                     SELECT 1 FROM public.assinaturas a
-                    WHERE a.usuario_id = u.id AND a.status = 'ACTIVATED'
+                    WHERE a.user_id = u.id AND a.status = 'ACTIVE'
                 ) THEN 'ativo'
                 WHEN EXISTS (
                     SELECT 1 FROM public.assinaturas a
-                    WHERE a.usuario_id = u.id AND a.status = 'DEACTIVATED'
+                    WHERE a.user_id = u.id AND a.status IN ('EXPIRED', 'INACTIVE')
                 ) THEN 'encerrado'
                 ELSE 'trial'
             END AS status_trial
