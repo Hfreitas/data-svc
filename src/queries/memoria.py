@@ -9,12 +9,13 @@ def fetch_memoria_48h(conn, usuario_id: int, limit: int = 50) -> dict:
             FROM chat_memory
             WHERE usuario_id = %s
               AND criado_em > NOW() - INTERVAL '2 days'
-            ORDER BY criado_em ASC
+            ORDER BY criado_em DESC
             LIMIT %s
             """,
             (usuario_id, limit),
         )
         rows = cur.fetchall()
+        rows.reverse()  # DESC+LIMIT pega as N mais recentes; reverte pra ordem cronológica
 
     linhas = []
     for row in rows:
