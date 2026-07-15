@@ -1,0 +1,58 @@
+name: Deploy to Cloud Run (réplica GCP)
+
+on:
+  push:
+    branches: [main]
+
+env:
+  REGION: us-west1
+  PROJECT_ID: meirelles-mei
+  SERVICE: data-svc
+  REPOSITORY: services
+  IMAGE: us-west1-docker.pkg.dev/meirelles-mei/services/data-svc
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SA }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
+
+      - name: Build image
+        run: docker build -t "${{ env.IMAGE }}:${{ github.sha }}" .
+
+      - name: Push image
+        run: docker push "${{ env.IMAGE }}:${{ github.sha }}"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "${{ env.SERVICE }}" \
+            --image="${{ env.IMAGE }}:${{ github.sha }}" \
+            --region="${{ env.REGION }}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --service-account="svc-runtime@meirelles-mei.iam.gserviceaccount.com" \
+            --port=8000 \
+            --min-instances=1 \
+            --max-instances=1 \
+            --set-env-vars=FLASK_ENV=production \
+            --set-secrets=DATABASE_URL=data-svc-database-url:latest,API_KEY=data-svc-api-key:latest \
+            --allow-unauthenticated \
+            --quiet
