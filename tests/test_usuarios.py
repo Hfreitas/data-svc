@@ -304,3 +304,69 @@ class TestResetarDemo:
         assert resp.status_code == 404
         assert resp.get_json() == {"error": "usuario_nao_encontrado"}
         cache_invalidate_mock.assert_not_called()
+
+
+class TestResetDemoQuery:
+    """Testa src.queries.usuarios.reset_demo direto (sem mockar a função),
+    pra travar o escopo: só feedbacks/chat_memory são apagados, dado de
+    negócio (agenda, comprovantes, lista de compras) fica intacto."""
+
+    def test_apaga_so_feedbacks_e_chat_memory(self, mocker):
+        import src.queries.usuarios as q
+
+        usuario_id = 42
+        usuario_row = {"id": usuario_id, "numero_telefone": "5511977776666", "estado_atual": "menu"}
+
+        executed_sql = []
+
+        cursor = mocker.MagicMock()
+        cursor.__enter__.return_value = cursor
+        cursor.__exit__.return_value = False
+        cursor.fetchone.return_value = usuario_row
+
+        def _execute(sql, params=None):
+            executed_sql.append(" ".join(sql.split()))
+
+        cursor.execute.side_effect = _execute
+
+        conn = mocker.MagicMock()
+        conn.cursor.return_value = cursor
+
+        result = q.reset_demo(conn, usuario_id)
+
+        assert result == usuario_row
+
+        delete_statements = [sql for sql in executed_sql if sql.startswith("DELETE")]
+        assert len(delete_statements) == 2
+        assert any("public.feedbacks" in sql for sql in delete_statements)
+        assert any("public.chat_memory" in sql for sql in delete_statements)
+
+        tabelas_de_negocio = [
+            "public.comprovantes",
+            "public.agendamentos",
+            "public.contas_recorrentes",
+            "public.lista_compras",
+            "public.itens_lista",
+            "public.google_calendar_events",
+            "public.agendamento_estado",
+            "public.agendamento_auditoria",
+            "public.lembrete_contas_log",
+        ]
+        for tabela in tabelas_de_negocio:
+            assert not any(tabela in sql for sql in executed_sql), f"{tabela} não deveria ser apagada"
+
+    def test_retorna_none_se_usuario_nao_existe(self, mocker):
+        import src.queries.usuarios as q
+
+        cursor = mocker.MagicMock()
+        cursor.__enter__.return_value = cursor
+        cursor.__exit__.return_value = False
+        cursor.fetchone.return_value = None
+
+        conn = mocker.MagicMock()
+        conn.cursor.return_value = cursor
+
+        result = q.reset_demo(conn, 999)
+
+        assert result is None
+        cursor.execute.assert_called_once()

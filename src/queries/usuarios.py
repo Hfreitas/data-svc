@@ -127,10 +127,12 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
 
 
 def reset_demo(conn, usuario_id: int) -> dict | None:
-    """Zera onboarding e apaga dados transacionais do usuário (demo/onboarding replay).
+    """Zera onboarding do usuário pra disparar o fluxo de novo (demo replay).
 
-    Mantém o cadastro (id, numero_telefone) intacto — só reseta o estado
-    e remove os registros filhos que fariam o bot "lembrar" do histórico anterior.
+    Mantém o cadastro (id, numero_telefone) e todo dado de negócio intacto —
+    agenda, contas recorrentes, lista de compras e comprovantes (gastos/vendas)
+    não são apagados. Só limpa `feedbacks` e `chat_memory` pra o bot não
+    "lembrar" da conversa/feedback anterior no replay do onboarding.
     """
     sql_update = """
         UPDATE public.usuarios
@@ -154,17 +156,6 @@ def reset_demo(conn, usuario_id: int) -> dict | None:
     """
 
     sql_deletes = [
-        "DELETE FROM public.lembrete_contas_log WHERE conta_id IN "
-        "(SELECT id FROM public.contas_recorrentes WHERE usuario_id = %(usuario_id)s);",
-        "DELETE FROM public.itens_lista WHERE lista_id IN "
-        "(SELECT id FROM public.lista_compras WHERE usuario_id = %(usuario_id)s);",
-        "DELETE FROM public.google_calendar_events WHERE usuario_id = %(usuario_id)s;",
-        "DELETE FROM public.agendamento_auditoria WHERE usuario_id = %(usuario_id)s;",
-        "DELETE FROM public.agendamento_estado WHERE usuario_id = %(usuario_id)s;",
-        "DELETE FROM public.agendamentos WHERE usuario_id = %(usuario_id)s;",
-        "DELETE FROM public.contas_recorrentes WHERE usuario_id = %(usuario_id)s;",
-        "DELETE FROM public.lista_compras WHERE usuario_id = %(usuario_id)s;",
-        "DELETE FROM public.comprovantes WHERE usuario_id = %(usuario_id)s;",
         "DELETE FROM public.feedbacks WHERE usuario_id = %(usuario_id)s;",
         "DELETE FROM public.chat_memory WHERE usuario_id = %(usuario_id)s;",
     ]
