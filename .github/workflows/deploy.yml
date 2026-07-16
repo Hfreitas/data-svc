@@ -53,6 +53,6 @@ jobs:
             --min-instances=1 \
             --max-instances=1 \
             --set-env-vars=FLASK_ENV=production \
-            --set-secrets=DATABASE_URL=data-svc-database-url:latest,API_KEY=data-svc-api-key:latest \
+            --set-secrets=DATABASE_URL=data-svc-database-url:latest,API_KEY=data-svc-api-key:latest,OPENAI_API_KEY=data-svc-openai-api-key:latest \
             --allow-unauthenticated \
             --quiet
