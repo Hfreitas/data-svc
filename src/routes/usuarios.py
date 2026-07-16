@@ -91,6 +91,19 @@ def update_usuario(usuario_id: int):
         return ok(200, usuario)
 
 
+@usuarios_bp.route("/usuarios/<int:usuario_id>/resetar-demo", methods=["POST"])
+def resetar_demo(usuario_id: int):
+    with get_db_conn() as conn:
+        usuario = q.reset_demo(conn, usuario_id)
+        if not usuario:
+            return fail("usuario_nao_encontrado", status_code=404)
+
+        cache_invalidate("usuario", usuario["numero_telefone"])
+        cache_invalidate("usuario", f"id:{usuario_id}")
+
+        return ok(200, usuario)
+
+
 @usuarios_bp.route("/usuarios/<int:usuario_id>/prox-nfe", methods=["GET"])
 def prox_nfe(usuario_id: int):
     with get_db_conn() as conn:

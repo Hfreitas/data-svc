@@ -263,3 +263,44 @@ class TestUpdateUsuario:
         assert call_fields.get("onboarding_step") == "NEGOCIO"
         assert call_fields.get("confirmacao_lembretes") is True
         assert call_fields.get("onboarding_concluido") is False
+
+
+class TestResetarDemo:
+    def test_reseta_usuario_e_invalida_cache(self, client, mock_db_conn, mocker):
+        usuario_id = 7
+        usuario_resetado = {
+            "id": usuario_id,
+            "numero_telefone": "5511977776666",
+            "estado_atual": "menu",
+            "interacao_previa": False,
+            "onboarding_step": None,
+            "onboarding_concluido": False,
+        }
+        _, conn = mock_db_conn("src.routes.usuarios.get_db_conn")
+
+        reset_mock = mocker.patch(
+            "src.routes.usuarios.q.reset_demo", return_value=usuario_resetado
+        )
+        cache_invalidate_mock = mocker.patch("src.routes.usuarios.cache_invalidate")
+
+        resp = client.post(f"/usuarios/{usuario_id}/resetar-demo")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == usuario_resetado
+        reset_mock.assert_called_once_with(conn, usuario_id)
+        assert cache_invalidate_mock.call_count == 2
+        cache_invalidate_mock.assert_any_call("usuario", usuario_resetado["numero_telefone"])
+        cache_invalidate_mock.assert_any_call("usuario", f"id:{usuario_id}")
+
+    def test_retorna_404_usuario_inexistente(self, client, mock_db_conn, mocker):
+        usuario_id = 999
+        mock_db_conn("src.routes.usuarios.get_db_conn")
+
+        mocker.patch("src.routes.usuarios.q.reset_demo", return_value=None)
+        cache_invalidate_mock = mocker.patch("src.routes.usuarios.cache_invalidate")
+
+        resp = client.post(f"/usuarios/{usuario_id}/resetar-demo")
+
+        assert resp.status_code == 404
+        assert resp.get_json() == {"error": "usuario_nao_encontrado"}
+        cache_invalidate_mock.assert_not_called()

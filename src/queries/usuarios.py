@@ -126,6 +126,61 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
         return dict(row) if row else None
 
 
+def reset_demo(conn, usuario_id: int) -> dict | None:
+    """Zera onboarding e apaga dados transacionais do usuário (demo/onboarding replay).
+
+    Mantém o cadastro (id, numero_telefone) intacto — só reseta o estado
+    e remove os registros filhos que fariam o bot "lembrar" do histórico anterior.
+    """
+    sql_update = """
+        UPDATE public.usuarios
+        SET
+            estado_atual          = 'menu',
+            interacao_previa      = false,
+            onboarding_step       = NULL,
+            onboarding_concluido  = false,
+            onboarding_timestamp  = NULL,
+            tipo_negocio          = NULL,
+            descricao_negocio     = NULL,
+            descricao_objetivo    = NULL,
+            area_ajuda            = NULL,
+            preco_referencia      = NULL,
+            dias_trabalho         = NULL,
+            horario_inicio        = NULL,
+            horario_fim           = NULL,
+            contas_fixas_completo = false
+        WHERE id = %(usuario_id)s
+        RETURNING *;
+    """
+
+    sql_deletes = [
+        "DELETE FROM public.lembrete_contas_log WHERE conta_id IN "
+        "(SELECT id FROM public.contas_recorrentes WHERE usuario_id = %(usuario_id)s);",
+        "DELETE FROM public.itens_lista WHERE lista_id IN "
+        "(SELECT id FROM public.lista_compras WHERE usuario_id = %(usuario_id)s);",
+        "DELETE FROM public.google_calendar_events WHERE usuario_id = %(usuario_id)s;",
+        "DELETE FROM public.agendamento_auditoria WHERE usuario_id = %(usuario_id)s;",
+        "DELETE FROM public.agendamento_estado WHERE usuario_id = %(usuario_id)s;",
+        "DELETE FROM public.agendamentos WHERE usuario_id = %(usuario_id)s;",
+        "DELETE FROM public.contas_recorrentes WHERE usuario_id = %(usuario_id)s;",
+        "DELETE FROM public.lista_compras WHERE usuario_id = %(usuario_id)s;",
+        "DELETE FROM public.comprovantes WHERE usuario_id = %(usuario_id)s;",
+        "DELETE FROM public.feedbacks WHERE usuario_id = %(usuario_id)s;",
+        "DELETE FROM public.chat_memory WHERE usuario_id = %(usuario_id)s;",
+    ]
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql_update, {"usuario_id": usuario_id})
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        for sql in sql_deletes:
+            cursor.execute(sql, {"usuario_id": usuario_id})
+
+        return dict(row)
+
+
 def get_prox_nfe(conn, usuario_id: int) -> dict:
     sql = """
         SELECT COALESCE(MAX(nfe_number), 0) + 1 AS prox
