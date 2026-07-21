@@ -1,3 +1,4 @@
+
 services:
   db:
     image: postgres:16-alpine
@@ -11,6 +12,15 @@ services:
       - pg_data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/01_schema.sql
       - ./scripts/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql
+
+  data-svc:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "8002:8000"
+    depends_on:
+      - db
 
 volumes:
   pg_data:
