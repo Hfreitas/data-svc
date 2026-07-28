@@ -11,6 +11,7 @@ from .comprovantes import (
     validate_mes,
     validate_modo,
 )
+from .comunidade import validate_ranking_params, validate_resposta_conexao_payload
 from .contas import validate_conta_recorrente_payload, validate_patch_conta_payload
 from .listas import (
     validate_lista_delete_itens_payload,
@@ -30,7 +31,9 @@ __all__ = [
     "validate_lista_itens_payload",
     "validate_mes",
     "validate_modo",
+    "validate_ranking_params",
     "validate_recurrence_payload",
+    "validate_resposta_conexao_payload",
     "validate_scope_agendamento",
     "validate_status_agendamento",
     "validate_telefone",
