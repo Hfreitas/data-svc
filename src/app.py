@@ -16,6 +16,7 @@ from src.routes.feedbacks import feedbacks_bp
 from src.routes.business import business_bp
 from src.routes.oauth import oauth_bp
 from src.routes.comunidade import comunidade_bp
+from src.routes.inbox import inbox_bp
 
 
 def create_app() -> Flask:
@@ -45,5 +46,6 @@ def create_app() -> Flask:
     app.register_blueprint(business_bp)
     app.register_blueprint(oauth_bp)
     app.register_blueprint(comunidade_bp)
+    app.register_blueprint(inbox_bp)
 
     return app
