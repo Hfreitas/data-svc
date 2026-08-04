@@ -61,6 +61,8 @@ def update_usuario(usuario_id: int):
         "versao_agente", "onboarding_step",
         "contas_fixas_completo", "onboarding_concluido", "onboarding_timestamp", "cluster",
         "confirmacao_lembretes", "cpf_cnpj",
+        "das_categoria", "das_valor",
+        "perfil_tipo", "eh_mei",
     }
 
     # Validar campos de agenda primeiro para coerção de tipos
