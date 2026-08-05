@@ -15,7 +15,9 @@ def find_by_telefone(conn, telefone: str) -> dict | None:
             dias_trabalho, horario_inicio, horario_fim,
             data_primeiro_contato, data_ultimo_contato,
             versao_agente, cpf_cnpj,
-            cluster, onboarding_step, confirmacao_lembretes, onboarding_concluido
+            cluster, onboarding_step, confirmacao_lembretes, onboarding_concluido,
+            das_categoria, das_valor,
+            perfil_tipo, eh_mei
         FROM public.usuarios
         WHERE numero_telefone = %(telefone)s
         LIMIT 1;
@@ -89,6 +91,10 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
             contas_fixas_completo   = COALESCE(%(contas_fixas_completo)s, contas_fixas_completo),
             ultimo_relatorio        = COALESCE(%(ultimo_relatorio)s, ultimo_relatorio),
             cpf_cnpj                = COALESCE(%(cpf_cnpj)s, cpf_cnpj),
+            das_categoria           = COALESCE(%(das_categoria)s, das_categoria),
+            das_valor               = COALESCE(%(das_valor)s, das_valor),
+            perfil_tipo             = COALESCE(%(perfil_tipo)s, perfil_tipo),
+            eh_mei                  = COALESCE(%(eh_mei)s, eh_mei),
             data_ultimo_contato     = NOW()
         WHERE id = %(id)s
         RETURNING *;
@@ -117,6 +123,10 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
         "contas_fixas_completo": None,
         "ultimo_relatorio": None,
         "cpf_cnpj": None,
+        "das_categoria": None,
+        "das_valor": None,
+        "perfil_tipo": None,
+        "eh_mei": None,
     }
     params.update(fields)
 

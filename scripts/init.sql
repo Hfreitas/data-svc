@@ -60,6 +60,10 @@ CREATE TABLE public.comprovantes (
   data_compra    date,                        -- preenchido quando operacao = 'gasto'
   last_update    timestamp with time zone,
   item_hash      varchar,                     -- hash SHA para idempotência no upsert
+  canal_venda    text,
+  pagador_nome   text,                        -- PL: quem pagou
+  pagador_cpf    text,                        -- PL: CPF do pagador
+  atendido_nome  text,                        -- PL: paciente/cliente atendido
   CONSTRAINT comprovantes_pkey PRIMARY KEY (id),
   CONSTRAINT comprovantes_item_hash_key UNIQUE (item_hash)
 );
