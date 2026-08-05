@@ -90,4 +90,13 @@ def validate_comprovante_payload(body: dict) -> dict:
     body["operacao"] = operacao
     body["item"] = item
     body["item_hash"] = item_hash
+
+    # Campos opcionais PL (rendimento): quem pagou / CPF / quem foi atendido
+    for key in ("pagador_nome", "pagador_cpf", "atendido_nome", "canal_venda"):
+        raw = body.get(key)
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        body[key] = text or None
+
     return body

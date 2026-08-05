@@ -42,6 +42,9 @@ def list_comprovantes(conn, usuario_id: int, mes: str, modo: str) -> list[dict]:
             valor_unitario,
             valor_total,
             canal_venda,
+            pagador_nome,
+            pagador_cpf,
+            atendido_nome,
         CASE
             WHEN operacao = 'gasto' THEN data_compra
             WHEN operacao = 'venda' THEN data_venda
@@ -83,23 +86,32 @@ def upsert(conn, usuario_id: int, data: dict) -> dict:
         "data_venda": data.get("data_venda"),
         "data_compra": data.get("data_compra"),
         "canal_venda": data.get("canal_venda"),
+        "pagador_nome": data.get("pagador_nome"),
+        "pagador_cpf": data.get("pagador_cpf"),
+        "atendido_nome": data.get("atendido_nome"),
     }
 
     sql = """
         INSERT INTO public.comprovantes (
             usuario_id, item, quantidade, valor_unitario, valor_total,
-            data_compra, data_venda, operacao, last_update, item_hash, canal_venda)
+            data_compra, data_venda, operacao, last_update, item_hash, canal_venda,
+            pagador_nome, pagador_cpf, atendido_nome)
         VALUES (
             %(usuario_id)s, %(item)s, %(quantidade)s, %(valor_unitario)s, %(valor_total)s,
-            %(data_compra)s, %(data_venda)s, %(operacao)s, NOW(), %(item_hash)s, %(canal_venda)s)
+            %(data_compra)s, %(data_venda)s, %(operacao)s, NOW(), %(item_hash)s, %(canal_venda)s,
+            %(pagador_nome)s, %(pagador_cpf)s, %(atendido_nome)s)
         ON CONFLICT (item_hash)
         DO UPDATE SET
             quantidade    = EXCLUDED.quantidade,
             valor_unitario = EXCLUDED.valor_unitario,
             valor_total   = EXCLUDED.valor_total,
             last_update   = EXCLUDED.last_update,
-            canal_venda   = EXCLUDED.canal_venda
-        RETURNING id, operacao, item, valor_total, data_compra, data_venda, canal_venda;
+            canal_venda   = EXCLUDED.canal_venda,
+            pagador_nome  = COALESCE(EXCLUDED.pagador_nome, public.comprovantes.pagador_nome),
+            pagador_cpf   = COALESCE(EXCLUDED.pagador_cpf, public.comprovantes.pagador_cpf),
+            atendido_nome = COALESCE(EXCLUDED.atendido_nome, public.comprovantes.atendido_nome)
+        RETURNING id, operacao, item, valor_total, data_compra, data_venda, canal_venda,
+                  pagador_nome, pagador_cpf, atendido_nome;
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
         cursor.execute(sql, params)
