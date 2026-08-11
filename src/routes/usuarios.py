@@ -61,6 +61,9 @@ def update_usuario(usuario_id: int):
         "versao_agente", "onboarding_step",
         "contas_fixas_completo", "onboarding_concluido", "onboarding_timestamp", "cluster",
         "confirmacao_lembretes", "cpf_cnpj",
+        "perfil_tipo", "eh_mei", "profissao", "modalidade",
+        "conselho_sigla", "conselho_uf", "conselho_numero",
+        "uf", "municipio", "followup_agendado", "followup_timestamp",
     }
 
     # Validar campos de agenda primeiro para coerção de tipos
@@ -102,6 +105,40 @@ def resetar_demo(usuario_id: int):
         cache_invalidate("usuario", f"id:{usuario_id}")
 
         return ok(200, usuario)
+
+
+@usuarios_bp.route("/usuarios/<int:usuario_id>/notificacoes", methods=["GET"])
+def get_notificacoes(usuario_id: int):
+    with get_db_conn() as conn:
+        prefs = q.get_notificacoes(conn, usuario_id)
+    return ok(200, prefs)
+
+
+@usuarios_bp.route("/usuarios/<int:usuario_id>/notificacoes", methods=["PUT"])
+def update_notificacoes(usuario_id: int):
+    """Upsert de preferências de notificação.
+
+    Body: objeto plano {tipo: bool}, ex: {"das": true, "inss": false}.
+    Só tipos válidos (NOTIF_TIPOS) são aceitos; qualquer chave desconhecida
+    rejeita a requisição inteira.
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not body:
+        return fail("body_invalido", "informe {tipo: bool}", 400)
+
+    invalidos = [k for k in body if k not in q.NOTIF_TIPOS]
+    if invalidos:
+        return fail(
+            "tipo_invalido",
+            f"tipos não permitidos: {', '.join(invalidos)}",
+            400,
+        )
+
+    prefs = {k: bool(v) for k, v in body.items()}
+
+    with get_db_conn() as conn:
+        atual = q.upsert_notificacoes(conn, usuario_id, prefs)
+    return ok(200, atual)
 
 
 @usuarios_bp.route("/usuarios/<int:usuario_id>/prox-nfe", methods=["GET"])
