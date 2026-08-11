@@ -265,6 +265,102 @@ class TestUpdateUsuario:
         assert call_fields.get("onboarding_concluido") is False
 
 
+    def test_atualiza_campos_perfil_multiperfil(self, client, mock_db_conn, mocker):
+        usuario_id = 3
+        usuario_fake = {
+            "id": usuario_id,
+            "numero_telefone": "5511999999999",
+            "perfil_tipo": "profissional_liberal",
+            "eh_mei": False,
+            "conselho_sigla": "CRP",
+            "conselho_uf": "SP",
+            "conselho_numero": "06/12345",
+            "modalidade": "ambos",
+            "uf": "SP",
+        }
+        _, conn = mock_db_conn("src.routes.usuarios.get_db_conn")
+        update_mock = mocker.patch("src.routes.usuarios.q.update", return_value=usuario_fake)
+        mocker.patch("src.routes.usuarios.cache_invalidate")
+
+        payload = {
+            "perfil_tipo": "profissional_liberal",
+            "eh_mei": False,
+            "profissao": "psicólogo",
+            "modalidade": "ambos",
+            "conselho_sigla": "CRP",
+            "conselho_uf": "SP",
+            "conselho_numero": "06/12345",
+            "uf": "SP",
+            "municipio": "São Paulo",
+            "followup_agendado": True,
+        }
+        resp = client.put(f"/usuarios/{usuario_id}", json=payload)
+
+        assert resp.status_code == 200
+        call_fields = update_mock.call_args.args[2]
+        assert call_fields.get("perfil_tipo") == "profissional_liberal"
+        assert call_fields.get("eh_mei") is False
+        assert call_fields.get("conselho_sigla") == "CRP"
+        assert call_fields.get("conselho_numero") == "06/12345"
+        assert call_fields.get("modalidade") == "ambos"
+        assert call_fields.get("uf") == "SP"
+        assert call_fields.get("followup_agendado") is True
+
+
+class TestNotificacoes:
+    def test_get_retorna_preferencias(self, client, mock_db_conn, mocker):
+        usuario_id = 8
+        prefs = [{"tipo": "das", "ativo": True}, {"tipo": "inss", "ativo": False}]
+        _, conn = mock_db_conn("src.routes.usuarios.get_db_conn")
+        get_mock = mocker.patch("src.routes.usuarios.q.get_notificacoes", return_value=prefs)
+
+        resp = client.get(f"/usuarios/{usuario_id}/notificacoes")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == prefs
+        get_mock.assert_called_once_with(conn, usuario_id)
+
+    def test_put_upsert_preferencias(self, client, mock_db_conn, mocker):
+        usuario_id = 8
+        atual = [{"tipo": "das", "ativo": True}, {"tipo": "segunda", "ativo": False}]
+        _, conn = mock_db_conn("src.routes.usuarios.get_db_conn")
+        upsert_mock = mocker.patch(
+            "src.routes.usuarios.q.upsert_notificacoes", return_value=atual
+        )
+
+        resp = client.put(
+            f"/usuarios/{usuario_id}/notificacoes",
+            json={"das": True, "segunda": False},
+        )
+
+        assert resp.status_code == 200
+        assert resp.get_json() == atual
+        upsert_mock.assert_called_once_with(conn, usuario_id, {"das": True, "segunda": False})
+
+    def test_put_rejeita_tipo_invalido(self, client, mock_db_conn, mocker):
+        usuario_id = 8
+        mock_db_conn("src.routes.usuarios.get_db_conn")
+        upsert_mock = mocker.patch("src.routes.usuarios.q.upsert_notificacoes")
+
+        resp = client.put(
+            f"/usuarios/{usuario_id}/notificacoes",
+            json={"das": True, "xpto": False},
+        )
+
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "tipo_invalido"
+        upsert_mock.assert_not_called()
+
+    def test_put_rejeita_body_vazio(self, client, mock_db_conn):
+        usuario_id = 8
+        mock_db_conn("src.routes.usuarios.get_db_conn")
+
+        resp = client.put(f"/usuarios/{usuario_id}/notificacoes", json={})
+
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "body_invalido"
+
+
 class TestResetarDemo:
     def test_reseta_usuario_e_invalida_cache(self, client, mock_db_conn, mocker):
         usuario_id = 7
@@ -308,10 +404,11 @@ class TestResetarDemo:
 
 class TestResetDemoQuery:
     """Testa src.queries.usuarios.reset_demo direto (sem mockar a função),
-    pra travar o escopo: só feedbacks/chat_memory são apagados, dado de
-    negócio (agenda, comprovantes, lista de compras) fica intacto."""
+    pra travar o escopo: só feedbacks/chat_memory/preferencias_notificacao são
+    apagados, dado de negócio (agenda, comprovantes, lista de compras) fica
+    intacto."""
 
-    def test_apaga_so_feedbacks_e_chat_memory(self, mocker):
+    def test_apaga_so_feedbacks_chat_memory_e_preferencias(self, mocker):
         import src.queries.usuarios as q
 
         usuario_id = 42
@@ -337,9 +434,10 @@ class TestResetDemoQuery:
         assert result == usuario_row
 
         delete_statements = [sql for sql in executed_sql if sql.startswith("DELETE")]
-        assert len(delete_statements) == 2
+        assert len(delete_statements) == 3
         assert any("public.feedbacks" in sql for sql in delete_statements)
         assert any("public.chat_memory" in sql for sql in delete_statements)
+        assert any("public.preferencias_notificacao" in sql for sql in delete_statements)
 
         tabelas_de_negocio = [
             "public.comprovantes",

@@ -15,7 +15,10 @@ def find_by_telefone(conn, telefone: str) -> dict | None:
             dias_trabalho, horario_inicio, horario_fim,
             data_primeiro_contato, data_ultimo_contato,
             versao_agente, cpf_cnpj,
-            cluster, onboarding_step, confirmacao_lembretes, onboarding_concluido
+            cluster, onboarding_step, confirmacao_lembretes, onboarding_concluido,
+            perfil_tipo, eh_mei, profissao, modalidade,
+            conselho_sigla, conselho_uf, conselho_numero,
+            uf, municipio, followup_agendado, followup_timestamp
         FROM public.usuarios
         WHERE numero_telefone = %(telefone)s
         LIMIT 1;
@@ -89,11 +92,22 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
             contas_fixas_completo   = COALESCE(%(contas_fixas_completo)s, contas_fixas_completo),
             ultimo_relatorio        = COALESCE(%(ultimo_relatorio)s, ultimo_relatorio),
             cpf_cnpj                = COALESCE(%(cpf_cnpj)s, cpf_cnpj),
+            perfil_tipo             = COALESCE(%(perfil_tipo)s, perfil_tipo),
+            eh_mei                  = COALESCE(%(eh_mei)s, eh_mei),
+            profissao               = COALESCE(%(profissao)s, profissao),
+            modalidade              = COALESCE(%(modalidade)s, modalidade),
+            conselho_sigla          = COALESCE(%(conselho_sigla)s, conselho_sigla),
+            conselho_uf             = COALESCE(%(conselho_uf)s, conselho_uf),
+            conselho_numero         = COALESCE(%(conselho_numero)s, conselho_numero),
+            uf                      = COALESCE(%(uf)s, uf),
+            municipio               = COALESCE(%(municipio)s, municipio),
+            followup_agendado       = COALESCE(%(followup_agendado)s, followup_agendado),
+            followup_timestamp      = COALESCE(%(followup_timestamp)s, followup_timestamp),
             data_ultimo_contato     = NOW()
         WHERE id = %(id)s
         RETURNING *;
     """
-    
+
     params = {
         "id": usuario_id,
         "nome": None,
@@ -117,6 +131,17 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
         "contas_fixas_completo": None,
         "ultimo_relatorio": None,
         "cpf_cnpj": None,
+        "perfil_tipo": None,
+        "eh_mei": None,
+        "profissao": None,
+        "modalidade": None,
+        "conselho_sigla": None,
+        "conselho_uf": None,
+        "conselho_numero": None,
+        "uf": None,
+        "municipio": None,
+        "followup_agendado": None,
+        "followup_timestamp": None,
     }
     params.update(fields)
 
@@ -150,7 +175,18 @@ def reset_demo(conn, usuario_id: int) -> dict | None:
             dias_trabalho         = NULL,
             horario_inicio        = NULL,
             horario_fim           = NULL,
-            contas_fixas_completo = false
+            contas_fixas_completo = false,
+            perfil_tipo           = NULL,
+            eh_mei                = NULL,
+            profissao             = NULL,
+            modalidade            = NULL,
+            conselho_sigla        = NULL,
+            conselho_uf           = NULL,
+            conselho_numero       = NULL,
+            uf                    = NULL,
+            municipio             = NULL,
+            followup_agendado     = false,
+            followup_timestamp    = NULL
         WHERE id = %(usuario_id)s
         RETURNING *;
     """
@@ -158,6 +194,7 @@ def reset_demo(conn, usuario_id: int) -> dict | None:
     sql_deletes = [
         "DELETE FROM public.feedbacks WHERE usuario_id = %(usuario_id)s;",
         "DELETE FROM public.chat_memory WHERE usuario_id = %(usuario_id)s;",
+        "DELETE FROM public.preferencias_notificacao WHERE usuario_id = %(usuario_id)s;",
     ]
 
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -170,6 +207,47 @@ def reset_demo(conn, usuario_id: int) -> dict | None:
             cursor.execute(sql, {"usuario_id": usuario_id})
 
         return dict(row)
+
+
+# Tipos válidos de preferência de notificação (espelha o CHECK da tabela).
+NOTIF_TIPOS = (
+    "das", "declaracao", "inss", "carneleao", "ir", "irpf",
+    "tff_iss", "segunda", "relatorio", "lembrete_relatorio",
+)
+
+
+def get_notificacoes(conn, usuario_id: int) -> list:
+    """Retorna as preferências de notificação do usuário (1 linha por tipo)."""
+    sql = """
+        SELECT tipo, ativo
+        FROM public.preferencias_notificacao
+        WHERE usuario_id = %(usuario_id)s
+        ORDER BY tipo;
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"usuario_id": usuario_id})
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def upsert_notificacoes(conn, usuario_id: int, prefs: dict) -> list:
+    """Upsert idempotente de preferências: {tipo: ativo(bool)}.
+
+    Insere ou atualiza uma linha por (usuario_id, tipo); só toca os tipos
+    informados. Retorna o conjunto completo atual do usuário.
+    """
+    sql = """
+        INSERT INTO public.preferencias_notificacao (usuario_id, tipo, ativo)
+        VALUES (%(usuario_id)s, %(tipo)s, %(ativo)s)
+        ON CONFLICT (usuario_id, tipo)
+        DO UPDATE SET ativo = EXCLUDED.ativo, updated_at = NOW();
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        for tipo, ativo in prefs.items():
+            cursor.execute(
+                sql,
+                {"usuario_id": usuario_id, "tipo": tipo, "ativo": bool(ativo)},
+            )
+    return get_notificacoes(conn, usuario_id)
 
 
 def get_prox_nfe(conn, usuario_id: int) -> dict:
