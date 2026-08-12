@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 
 from src.db import get_db_conn
 from src.cache import cache_get, cache_set, cache_invalidate
+from src import redis_cache
 from src.config import Config
 from src.utils.validators import validate_telefone, require_fields, validate_usuario_agenda_fields
 import src.queries.usuarios as q
@@ -14,18 +15,25 @@ usuarios_bp = Blueprint("usuarios", __name__)
 def get_usuario():
     telefone = validate_telefone(request.args.get('telefone')) 
       
+    # L1 in-process (por-worker)
     cached = cache_get("usuario", telefone)
-    
     if cached:
         return jsonify(cached)
-    
+
+    # L2 distribuído (Redis) — sobrevive a restart/multi-worker; miss cai no DB
+    l2 = redis_cache.cache_get(f"user:{telefone}")
+    if l2:
+        cache_set("usuario", telefone, l2, Config.CACHE_TTL_USUARIO)
+        return jsonify(l2)
+
     with get_db_conn() as conn:
         usuario = q.find_by_telefone(conn, telefone)
-        
+
         if not usuario:
             return fail("usuario_nao_encontrado", status_code=404)
-        
+
         cache_set("usuario", telefone, usuario, Config.CACHE_TTL_USUARIO)
+        redis_cache.cache_set(f"user:{telefone}", usuario, Config.REDIS_TTL_USER)
         return ok(200, usuario)
 
 
@@ -41,9 +49,10 @@ def create_usuario():
 
     with get_db_conn() as conn:
         usuario = q.upsert(conn, numero_telefone, body.get("nome"), body.get("razao_social"))
-        
+
         cache_invalidate("usuario", numero_telefone)
-        
+        redis_cache.cache_del(f"user:{numero_telefone}")
+
         return ok(200, usuario)
 
 
@@ -90,6 +99,7 @@ def update_usuario(usuario_id: int):
 
         cache_invalidate("usuario", usuario["numero_telefone"])
         cache_invalidate("usuario", f"id:{usuario_id}")
+        redis_cache.cache_del(f"user:{usuario['numero_telefone']}")
 
         return ok(200, usuario)
 
@@ -103,6 +113,7 @@ def resetar_demo(usuario_id: int):
 
         cache_invalidate("usuario", usuario["numero_telefone"])
         cache_invalidate("usuario", f"id:{usuario_id}")
+        redis_cache.cache_del(f"user:{usuario['numero_telefone']}")
 
         return ok(200, usuario)
 

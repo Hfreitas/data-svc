@@ -76,6 +76,33 @@ class TestGetUsuario:
         assert data["confirmacao_lembretes"] is True
         assert data["onboarding_concluido"] is False
 
+    def test_l2_redis_hit_nao_bate_no_db(self, client, mock_db_conn, mocker):
+        telefone = "5511999999999"
+        usuario_fake = {"id": 1, "numero_telefone": telefone, "nome": "Dandara"}
+        get_db_conn_mock, _ = mock_db_conn("src.routes.usuarios.get_db_conn")
+
+        mocker.patch("src.routes.usuarios.cache_get", return_value=None)  # L1 miss
+        mocker.patch("src.routes.usuarios.redis_cache.cache_get", return_value=usuario_fake)
+        mocker.patch("src.routes.usuarios.cache_set")
+
+        resp = client.get(f"/usuarios?telefone={telefone}")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == usuario_fake
+        get_db_conn_mock.assert_not_called()  # L2 hit evita o Postgres
+
+    def test_l2_redis_invalida_no_put(self, client, mock_db_conn, mocker):
+        usuario_fake = {"id": 7, "numero_telefone": "5511888888888", "nome": "X"}
+        _, conn = mock_db_conn("src.routes.usuarios.get_db_conn")
+        mocker.patch("src.routes.usuarios.q.update", return_value=usuario_fake)
+        mocker.patch("src.routes.usuarios.cache_invalidate")
+        del_mock = mocker.patch("src.routes.usuarios.redis_cache.cache_del")
+
+        resp = client.put("/usuarios/7", json={"nome": "X"})
+
+        assert resp.status_code == 200
+        del_mock.assert_called_once_with("user:5511888888888")
+
     def test_usa_cache_no_segundo_request(self, client, mock_db_conn, mocker):
         telefone = "5511999999999"
         usuario_fake = {

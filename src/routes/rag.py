@@ -1,6 +1,9 @@
+import hashlib
+
 from flask import Blueprint, request
 from openai import OpenAI
 from src.db import get_db_conn
+from src import redis_cache
 from src.config import Config
 from src.utils.api_response import ok, fail
 import src.queries.rag as queries
@@ -27,6 +30,14 @@ def busca_rag():
     match_count = int(body.get("match_count", Config.RAG_MATCH_COUNT))
     match_threshold = float(body.get("match_threshold", Config.RAG_MATCH_THRESHOLD))
 
+    # Cache por hash da query normalizada + params: corta custo OpenAI embeddings + latência
+    cache_key = "rag:" + hashlib.sha256(
+        f"{pergunta.strip().lower()}|{match_count}|{match_threshold}".encode("utf-8")
+    ).hexdigest()
+    cached = redis_cache.cache_get(cache_key)
+    if cached is not None:
+        return ok(200, {"resultados": cached})
+
     try:
         resp = _get_client().embeddings.create(
             input=pergunta, model=Config.EMBEDDING_MODEL
@@ -38,4 +49,5 @@ def busca_rag():
     with get_db_conn() as conn:
         resultados = queries.busca_semantica(conn, embedding, match_threshold, match_count)
 
+    redis_cache.cache_set(cache_key, resultados, Config.REDIS_TTL_RAG)
     return ok(200, {"resultados": resultados})
