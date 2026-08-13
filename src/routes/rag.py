@@ -11,6 +11,9 @@ import src.queries.rag as queries
 rag_bp = Blueprint("rag", __name__)
 _openai_client: OpenAI | None = None
 
+# tags de perfil em documents.metadata usam 'pl' (não 'profissional_liberal')
+_PERFIL_MAP = {"profissional_liberal": "pl", "pl": "pl", "mei": "mei", "autonomo": "autonomo"}
+
 
 def _get_client() -> OpenAI:
     global _openai_client
@@ -29,10 +32,12 @@ def busca_rag():
     pergunta = body["pergunta"]
     match_count = int(body.get("match_count", Config.RAG_MATCH_COUNT))
     match_threshold = float(body.get("match_threshold", Config.RAG_MATCH_THRESHOLD))
+    # perfil opcional: filtra chunks por metadata.perfil (mei|autonomo|pl); inválido/ausente = sem filtro
+    perfil = _PERFIL_MAP.get(str(body.get("perfil") or "").lower().strip())
 
-    # Cache por hash da query normalizada + params: corta custo OpenAI embeddings + latência
+    # Cache por hash da query normalizada + params (inclui perfil: filtro muda o resultado)
     cache_key = "rag:" + hashlib.sha256(
-        f"{pergunta.strip().lower()}|{match_count}|{match_threshold}".encode("utf-8")
+        f"{pergunta.strip().lower()}|{match_count}|{match_threshold}|{perfil or ''}".encode("utf-8")
     ).hexdigest()
     cached = redis_cache.cache_get(cache_key)
     if cached is not None:
@@ -47,7 +52,7 @@ def busca_rag():
         return fail("embedding_error", str(e), 500)
 
     with get_db_conn() as conn:
-        resultados = queries.busca_semantica(conn, embedding, match_threshold, match_count)
+        resultados = queries.busca_semantica(conn, embedding, match_threshold, match_count, perfil)
 
     redis_cache.cache_set(cache_key, resultados, Config.REDIS_TTL_RAG)
     return ok(200, {"resultados": resultados})
