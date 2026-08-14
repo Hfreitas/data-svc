@@ -2,6 +2,7 @@ import pytest
 
 from src.cache import cache_invalidate
 from src.routes.comunidade import _BAIRRO_NS
+from src.queries import comunidade as q_comunidade
 
 
 @pytest.fixture(autouse=True)
@@ -584,3 +585,82 @@ class TestCancelarConexoes:
 
         assert resp.status_code == 400
         assert resp.get_json()["error"] == "body_invalido"
+
+
+class _FakeCursor:
+    """Cursor mínimo para exercitar as queries sem banco.
+
+    Os testes de rota mockam `q.*` inteiro, então a query em si nunca roda ali —
+    foi assim que dois bugs de SQL do ranking passaram por 49 testes verdes. Aqui
+    o alvo é o encadeamento de comandos dentro da própria query.
+    """
+
+    def __init__(self, respostas):
+        self.respostas = list(respostas)
+        self.executados = []
+        self.rowcount = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        self.executados.append((" ".join(sql.split()), params))
+        proximo = self.respostas.pop(0) if self.respostas else None
+        self._row = proximo
+        self.rowcount = 2 if proximo is None else 0
+
+    def fetchone(self):
+        return self._row
+
+    def fetchall(self):
+        return []
+
+
+class _FakeConn:
+    def __init__(self, cur):
+        self._cur = cur
+
+    def cursor(self, **kwargs):
+        return self._cur
+
+
+class TestExpiracaoDeIrmasPendentes:
+    def test_escolher_um_expira_as_irmas_pendentes(self):
+        """O ranking grava uma linha `pendente` por profissional EXIBIDO (é como o
+        conexao_id chega ao LLM). Promover uma tem que encerrar a rodada, senão as
+        irmãs ficam órfãs travando uq_conexao_ativa e o NOT EXISTS do ranking.
+        """
+        cur = _FakeCursor([{"id": "abc", "status": "aguardando_profissional", "solicitante_usuario_id": 116}])
+        resultado = q_comunidade.responder_solicitante(_FakeConn(cur), "abc", True)
+
+        assert resultado["status"] == "aguardando_profissional"
+        assert resultado["irmas_expiradas"] == 2
+
+        assert len(cur.executados) == 2
+        sql_irmas, params_irmas = cur.executados[1]
+        assert "status = 'expirado'" in sql_irmas
+        assert "id <> %(conexao_id)s" in sql_irmas
+        assert "status = 'pendente'" in sql_irmas
+        assert params_irmas == {"solicitante_id": 116, "conexao_id": "abc"}
+
+    def test_conexao_inexistente_nao_expira_nada(self):
+        """Sem linha promovida não há rodada para encerrar — expirar aqui apagaria
+        pendentes de uma busca legítima por causa de um id errado.
+        """
+        cur = _FakeCursor([None])
+        resultado = q_comunidade.responder_solicitante(_FakeConn(cur), "nao-existe", True)
+
+        assert resultado is None
+        assert len(cur.executados) == 1
+
+    def test_ranking_esconde_pendente_so_dentro_do_ttl(self):
+        cur = _FakeCursor([])
+        q_comunidade.ranking(_FakeConn(cur), categoria="motoboy", solicitante_id=5)
+
+        sql, params = cur.executados[0]
+        assert "c.status IN ('aguardando_profissional','conectado')" in sql
+        assert "c.updated_at > now() - (%(pendente_ttl)s)::interval" in sql
+        assert params["pendente_ttl"] == q_comunidade.PENDENTE_TTL

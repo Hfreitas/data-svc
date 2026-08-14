@@ -5,6 +5,12 @@ Queries de Comunidade MEIrelles — matching entre profissionais MEI cadastrados
 from psycopg2.extras import RealDictCursor
 
 
+# Janela em que um profissional já exibido não reaparece no ranking do mesmo
+# solicitante. Curta de propósito: serve para dar variedade entre buscas
+# seguidas, não para banir alguém da rede.
+PENDENTE_TTL = "24 hours"
+
+
 def ranking(
     conn,
     categoria: str,
@@ -58,7 +64,15 @@ def ranking(
           AND NOT EXISTS (
             SELECT 1 FROM public.comunidade_conexoes c
             WHERE c.solicitante_usuario_id = %(solicitante_id)s AND c.profissional_id = p.id
-              AND c.status IN ('pendente','aguardando_profissional','conectado'))
+              AND (
+                c.status IN ('aguardando_profissional','conectado')
+                -- `pendente` só esconde por %(pendente_ttl)s: essa linha significa
+                -- "já te mostrei essa pessoa", não "vocês têm vínculo". Sem prazo,
+                -- uma busca que o usuário simplesmente ignorou apagava aqueles
+                -- profissionais da rede dele para sempre.
+                OR (c.status = 'pendente'
+                    AND c.updated_at > now() - (%(pendente_ttl)s)::interval)
+              ))
         -- NULLS LAST, e não `distancia_km IS NULL`: alias de saída só resolve no
         -- ORDER BY quando aparece sozinho; dentro de expressão vira
         -- "column distancia_km does not exist".
@@ -70,6 +84,7 @@ def ranking(
         "categoria": categoria,
         "solicitante_id": solicitante_id,
         "limite": limite,
+        "pendente_ttl": PENDENTE_TTL,
     }
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -233,19 +248,44 @@ def cancelar_conexoes(conn, solicitante_id: int, conexao_id: str | None = None) 
 
 
 def responder_solicitante(conn, conexao_id, resposta: bool) -> dict | None:
+    """Etapa 1: o solicitante escolhe (ou recusa) um dos profissionais exibidos.
+
+    Escolher um encerra a rodada: as linhas `pendente` irmãs — criadas pelo
+    `ranking()` para os OUTROS profissionais da mesma lista, só para carregar um
+    `conexao_id` — viram `expirado`. Sem isso elas ficam órfãs para sempre,
+    ocupando o índice `uq_conexao_ativa` e, pior, casando o `NOT EXISTS` do
+    ranking: quem foi exibido uma vez e nunca contatado sumia da rede daquele
+    solicitante em definitivo.
+    """
     sql = """
         UPDATE public.comunidade_conexoes
         SET status = CASE WHEN %(resposta)s THEN 'aguardando_profissional' ELSE 'recusado_solicitante' END,
             solicitante_resposta = %(resposta)s, solicitante_respondeu_em = now(), updated_at = now()
         WHERE id = %(conexao_id)s AND status = 'pendente'
-        RETURNING id::text, status;
+        RETURNING id::text, status, solicitante_usuario_id;
     """
     params = {"conexao_id": conexao_id, "resposta": resposta}
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, params)
         row = cur.fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+
+        # Mesma transação da promoção: ou as duas mudanças valem, ou nenhuma.
+        cur.execute(
+            """
+            UPDATE public.comunidade_conexoes
+            SET status = 'expirado', updated_at = now()
+            WHERE solicitante_usuario_id = %(solicitante_id)s
+              AND id <> %(conexao_id)s
+              AND status = 'pendente';
+            """,
+            {"solicitante_id": row["solicitante_usuario_id"], "conexao_id": conexao_id},
+        )
+        row["irmas_expiradas"] = cur.rowcount
+
+    return dict(row)
 
 
 def responder_profissional(conn, conexao_id, resposta: bool, conectar: bool = True) -> dict | None:
