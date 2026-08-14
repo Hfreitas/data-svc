@@ -111,6 +111,26 @@ class TestRankingProfissionais:
         assert resp.status_code == 200
         assert ranking_mock.call_args.kwargs["limite"] == 3
 
+    @pytest.mark.parametrize(
+        "categoria",
+        ["advogado", "contador", "dentista", "fisioterapeuta", "nutricionista",
+         "psicologo", "personal_trainer"],
+    )
+    def test_aceita_categorias_pl_presentes_no_seed(
+        self, client, mock_db_conn, mocker, categoria
+    ):
+        # Regressão: essas 7 existem em comunidade_profissionais mas estavam fora
+        # da whitelist, então todo pedido PL levava 400.
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        mocker.patch("src.routes.comunidade.q.ranking", return_value=[])
+
+        resp = client.get(
+            "/comunidade/profissionais/ranking",
+            query_string={"bairro_id": 1, "categoria": categoria, "solicitante_id": 5},
+        )
+
+        assert resp.status_code == 200
+
     def test_retorna_400_quando_limit_abaixo_do_range(self, client):
         resp = client.get(
             "/comunidade/profissionais/ranking",
@@ -364,6 +384,48 @@ class TestResponderConexao:
         assert resp.status_code == 200
         assert resp.get_json() == resultado_fake
 
+    def test_etapa_2_default_conecta(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        prof = mocker.patch(
+            "src.routes.comunidade.q.responder_profissional",
+            return_value={"id": self.CONEXAO_ID, "status": "conectado"},
+        )
+
+        client.patch(
+            f"/comunidade/conexoes/{self.CONEXAO_ID}/resposta",
+            json={"etapa": 2, "resposta": True},
+        )
+
+        assert prof.call_args.kwargs["conectar"] is True
+
+    def test_etapa_2_conectar_false_registra_aceite_sem_fechar(
+        self, client, mock_db_conn, mocker
+    ):
+        # Aceite do indicado: profissional_resposta=true mas status segue
+        # aguardando_profissional, senão o evento 'indicado_aceitou' some.
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        prof = mocker.patch(
+            "src.routes.comunidade.q.responder_profissional",
+            return_value={"id": self.CONEXAO_ID, "status": "aguardando_profissional"},
+        )
+
+        resp = client.patch(
+            f"/comunidade/conexoes/{self.CONEXAO_ID}/resposta",
+            json={"etapa": 2, "resposta": True, "conectar": False},
+        )
+
+        assert resp.status_code == 200
+        assert prof.call_args.kwargs["conectar"] is False
+
+    def test_conectar_invalido_retorna_400(self, client):
+        resp = client.patch(
+            f"/comunidade/conexoes/{self.CONEXAO_ID}/resposta",
+            json={"etapa": 2, "resposta": True, "conectar": "talvez"},
+        )
+
+        assert resp.status_code == 400
+        assert "conectar" in resp.get_json()["detail"]
+
     def test_retorna_404_quando_mock_retorna_none(self, client, mock_db_conn, mocker):
         mock_db_conn("src.routes.comunidade.get_db_conn")
         mocker.patch("src.routes.comunidade.q.responder_solicitante", return_value=None)
@@ -433,3 +495,53 @@ class TestResponderConexao:
         data = resp.get_json()
         assert data["error"] == "bad_request"
         assert "resposta" in data["detail"]
+
+
+class TestCancelarConexoes:
+    def test_cancela_por_solicitante_retorna_200(self, client, mock_db_conn, mocker):
+        _, conn = mock_db_conn("src.routes.comunidade.get_db_conn")
+        canceladas = [{"id": "a", "status": "recusado_solicitante"}]
+        cancel = mocker.patch(
+            "src.routes.comunidade.q.cancelar_conexoes", return_value=canceladas
+        )
+
+        resp = client.post("/comunidade/conexoes/cancelar", json={"solicitante_id": 5})
+
+        assert resp.status_code == 200
+        assert resp.get_json() == canceladas
+        assert cancel.call_args.args == (conn, 5, None)
+
+    def test_cancela_com_conexao_id(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        cancel = mocker.patch("src.routes.comunidade.q.cancelar_conexoes", return_value=[])
+
+        resp = client.post(
+            "/comunidade/conexoes/cancelar",
+            json={"solicitante_id": 5, "conexao_id": "11111111-1111-1111-1111-111111111111"},
+        )
+
+        assert resp.status_code == 200
+        assert cancel.call_args.args[2] == "11111111-1111-1111-1111-111111111111"
+
+    def test_nada_para_cancelar_retorna_200_lista_vazia(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        mocker.patch("src.routes.comunidade.q.cancelar_conexoes", return_value=[])
+
+        resp = client.post("/comunidade/conexoes/cancelar", json={"solicitante_id": 5})
+
+        assert resp.status_code == 200
+        assert resp.get_json() == []
+
+    def test_retorna_400_sem_solicitante_id(self, client):
+        resp = client.post("/comunidade/conexoes/cancelar", json={})
+
+        assert resp.status_code == 400
+        assert "solicitante_id" in resp.get_json()["detail"]
+
+    def test_retorna_400_body_nao_json(self, client):
+        resp = client.post(
+            "/comunidade/conexoes/cancelar", data="x", content_type="text/plain"
+        )
+
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "body_invalido"

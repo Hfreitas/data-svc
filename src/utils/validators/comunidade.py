@@ -6,9 +6,14 @@ from .validators import parse_boolish, require_fields
 
 
 _CATEGORIAS_SERVICO: Final[set[str]] = {
+    # MEI
     "motoboy", "bolos", "doces", "costura", "limpeza", "manicure",
     "cabeleireiro", "fotografia", "design_grafico", "aulas_particulares",
     "frete_mudanca", "jardinagem", "eletricista", "encanador", "pintor", "outros",
+    # PL / conselho — estavam faltando e o seed já os usa; sem eles o ranking
+    # devolvia 400 e a matriz de complementaridade PL do prompt era inalcançável.
+    "advogado", "contador", "dentista", "fisioterapeuta", "nutricionista",
+    "psicologo", "personal_trainer",
 }
 
 
@@ -118,4 +123,24 @@ def validate_resposta_conexao_payload(body: dict) -> dict:
 
     resposta = parse_boolish(body.get("resposta"), "resposta")
 
-    return {"etapa": etapa, "resposta": resposta}
+    # Só a etapa 2 fecha a conexão. Default true = comportamento anterior, para
+    # não quebrar chamador existente.
+    conectar = True
+    if "conectar" in body:
+        conectar = parse_boolish(body.get("conectar"), "conectar")
+
+    return {"etapa": etapa, "resposta": resposta, "conectar": conectar}
+
+
+def validate_cancelamento_payload(body: dict) -> dict:
+    """Valida o corpo do cancelamento em lote de conexões do solicitante."""
+    try:
+        solicitante_id = int(body.get("solicitante_id"))
+        if solicitante_id <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        abort(400, description="o campo 'solicitante_id' é obrigatório e deve ser um inteiro maior que zero")
+
+    conexao_id = str(body.get("conexao_id") or "").strip() or None
+
+    return {"solicitante_id": solicitante_id, "conexao_id": conexao_id}

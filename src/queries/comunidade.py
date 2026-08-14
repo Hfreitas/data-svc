@@ -23,6 +23,8 @@ def ranking(
           p.servico_categoria,
           p.servico_descricao,
           b.nome                                          AS bairro,
+          u.numero_telefone                               AS telefone,
+          COALESCE(u.razao_social, p.nome_exibicao, u.nome) AS negocio,
           round((6371 * acos(
               least(1, greatest(-1,
                 cos(radians(o.centro_lat)) * cos(radians(b.centro_lat)) *
@@ -186,6 +188,31 @@ def conexao_pendente_por_telefone(conn, telefone: str) -> dict | None:
         return dict(row) if row else None
 
 
+def cancelar_conexoes(conn, solicitante_id: int, conexao_id: str | None = None) -> list:
+    """Cancela conexões em aberto do solicitante.
+
+    Mantém a semântica que já roda em produção no nó `Postgres CANCEL`: cancela a
+    conexão apontada E as demais ainda em aberto. O ranking cria uma linha
+    `pendente` por profissional exibido (até 10), então um cancelamento que
+    limpasse só uma deixaria as outras 9 travando o índice `uq_conexao_ativa` e o
+    filtro NOT EXISTS de buscas futuras.
+    """
+    sql = """
+        UPDATE public.comunidade_conexoes
+        SET status = 'recusado_solicitante',
+            solicitante_resposta = false, solicitante_respondeu_em = now(), updated_at = now()
+        WHERE solicitante_usuario_id = %(solicitante_id)s
+          AND (id::text = %(conexao_id)s
+               OR status IN ('pendente','aguardando_profissional'))
+        RETURNING id, status;
+    """
+    params = {"solicitante_id": solicitante_id, "conexao_id": conexao_id}
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, params)
+        return [dict(r) for r in cur.fetchall()]
+
+
 def responder_solicitante(conn, conexao_id, resposta: bool) -> dict | None:
     sql = """
         UPDATE public.comunidade_conexoes
@@ -202,16 +229,30 @@ def responder_solicitante(conn, conexao_id, resposta: bool) -> dict | None:
         return dict(row) if row else None
 
 
-def responder_profissional(conn, conexao_id, resposta: bool) -> dict | None:
+def responder_profissional(conn, conexao_id, resposta: bool, conectar: bool = True) -> dict | None:
+    """Resposta do profissional indicado.
+
+    `conectar=False` registra o SIM sem fechar a conexão: o fluxo de consentimento
+    duplo tem DOIS momentos — o indicado autoriza (aqui) e o contato só é entregue
+    ao solicitante depois (aí sim `conectar=True` → 'conectado'). Fechar já no
+    aceite quebraria a detecção de `evento_conexao='indicado_aceitou'`, que procura
+    exatamente status='aguardando_profissional' AND profissional_resposta=true.
+    Um NÃO recusa em qualquer caso.
+    """
     sql = """
         UPDATE public.comunidade_conexoes
-        SET status = CASE WHEN %(resposta)s THEN 'conectado' ELSE 'recusado_profissional' END,
+        SET status = CASE
+                       WHEN NOT %(resposta)s THEN 'recusado_profissional'
+                       WHEN %(conectar)s     THEN 'conectado'
+                       ELSE status
+                     END,
             profissional_resposta = %(resposta)s, profissional_respondeu_em = now(),
-            conectado_em = CASE WHEN %(resposta)s THEN now() ELSE NULL END, updated_at = now()
+            conectado_em = CASE WHEN %(resposta)s AND %(conectar)s THEN now() ELSE NULL END,
+            updated_at = now()
         WHERE id = %(conexao_id)s AND status = 'aguardando_profissional'
-        RETURNING id, status;
+        RETURNING id, status, profissional_resposta, solicitante_usuario_id;
     """
-    params = {"conexao_id": conexao_id, "resposta": resposta}
+    params = {"conexao_id": conexao_id, "resposta": resposta, "conectar": conectar}
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, params)

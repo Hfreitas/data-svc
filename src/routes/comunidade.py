@@ -4,6 +4,7 @@ from src.cache import cache_get, cache_set, get_cache
 from src.db import get_db_conn
 from src.utils.validators import (
     validate_bairro_lookup_params,
+    validate_cancelamento_payload,
     validate_ranking_params,
     validate_resposta_conexao_payload,
     validate_solicitante_id,
@@ -91,10 +92,28 @@ def responder_conexao(conexao_id):
 
     body = validate_resposta_conexao_payload(body)
 
-    fn = q.responder_solicitante if body["etapa"] == 1 else q.responder_profissional
-
     with get_db_conn() as conn:
-        resultado = fn(conn, conexao_id, body["resposta"])
+        if body["etapa"] == 1:
+            resultado = q.responder_solicitante(conn, conexao_id, body["resposta"])
+        else:
+            resultado = q.responder_profissional(
+                conn, conexao_id, body["resposta"], conectar=body["conectar"]
+            )
+
         if resultado is None:
             return fail("conexao_nao_encontrada_para_transicao", status_code=404)
         return ok(200, resultado)
+
+
+@comunidade_bp.route("/comunidade/conexoes/cancelar", methods=["POST"])
+def cancelar_conexoes():
+    """Cancela as conexões em aberto do solicitante (lote). Ver query homônima."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return fail("body_invalido", "JSON inválido ou ausente", 400)
+
+    body = validate_cancelamento_payload(body)
+
+    with get_db_conn() as conn:
+        canceladas = q.cancelar_conexoes(conn, body["solicitante_id"], body["conexao_id"])
+        return ok(200, canceladas)

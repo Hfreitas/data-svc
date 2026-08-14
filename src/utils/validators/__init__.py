@@ -14,6 +14,7 @@ from .comprovantes import (
 )
 from .comunidade import (
     validate_bairro_lookup_params,
+    validate_cancelamento_payload,
     validate_ranking_params,
     validate_resposta_conexao_payload,
     validate_solicitante_id,
@@ -31,6 +32,7 @@ __all__ = [
     "require_fields",
     "validate_agendamento_payload",
     "validate_bairro_lookup_params",
+    "validate_cancelamento_payload",
     "validate_solicitante_id",
     "validate_telefone_param",
     "validate_comprovante_payload",
