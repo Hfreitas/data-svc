@@ -27,12 +27,18 @@ def validate_ranking_params(args) -> dict:
         Dict com bairro_id, categoria, solicitante_id, limite, servico_contexto —
         pronto para **kwargs em queries.comunidade.ranking().
     """
-    try:
-        bairro_id = int(args.get("bairro_id"))
+    # Opcional: busca sem bairro é o caso comum (ninguém informa bairro no
+    # onboarding) e o único caminho para serviço digital/online. `0` e vazio
+    # contam como ausente — é o que o n8n manda quando não resolveu bairro.
+    bairro_raw = args.get("bairro_id")
+    bairro_id = None
+    if bairro_raw not in (None, "", "0"):
+        try:
+            bairro_id = int(bairro_raw)
+        except (TypeError, ValueError):
+            abort(400, description="o parâmetro 'bairro_id' deve ser um inteiro maior que zero")
         if bairro_id <= 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        abort(400, description="o parâmetro 'bairro_id' é obrigatório e deve ser um inteiro maior que zero")
+            bairro_id = None
 
     categoria = str(args.get("categoria") or "").strip().lower()
     if not categoria:

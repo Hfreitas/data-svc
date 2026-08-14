@@ -7,12 +7,23 @@ from psycopg2.extras import RealDictCursor
 
 def ranking(
     conn,
-    bairro_id: int,
     categoria: str,
     solicitante_id: int,
+    bairro_id: int | None = None,
     limite: int = 3,
     servico_contexto: str | None = None,
 ) -> list:
+    """Profissionais da categoria, mais perto primeiro quando há geo.
+
+    `bairro_id` é opcional dos dois lados. Participação na Comunidade é automática
+    (o trigger projeta `usuarios` -> `comunidade_profissionais`) e ninguém informa
+    bairro no onboarding, então a maior parte da rede tem `bairro_id NULL`. Exigir
+    geo deixaria essa gente invisível — e mataria serviço digital/online, que o
+    prompt promete atender sem restrição geográfica.
+
+    Quem tem bairro e origem conhecida ganha `distancia_km` e vem primeiro; o resto
+    entra depois, em ordem aleatória, com `distancia_km = null`.
+    """
     sql = """
         WITH origem AS (
           SELECT centro_lat, centro_lon FROM public.comunidade_bairros WHERE id = %(bairro_id)s
@@ -25,17 +36,22 @@ def ranking(
           b.nome                                          AS bairro,
           u.numero_telefone                               AS telefone,
           COALESCE(u.razao_social, p.nome_exibicao, u.nome) AS negocio,
-          round((6371 * acos(
-              least(1, greatest(-1,
-                cos(radians(o.centro_lat)) * cos(radians(b.centro_lat)) *
-                cos(radians(b.centro_lon) - radians(o.centro_lon)) +
-                sin(radians(o.centro_lat)) * sin(radians(b.centro_lat))
-              ))
-          ))::numeric, 1)                                 AS distancia_km
+          -- CASE explícito: greatest/least IGNORAM NULL em Postgres, então sem geo
+          -- `greatest(-1, NULL)` = -1 e acos(-1) = pi -> 20015.1 km (meia
+          -- circunferência) em vez de NULL, e o NULLS LAST vira no-op.
+          CASE WHEN o.centro_lat IS NULL OR b.centro_lat IS NULL THEN NULL
+               ELSE round((6371 * acos(
+                   least(1, greatest(-1,
+                     cos(radians(o.centro_lat)) * cos(radians(b.centro_lat)) *
+                     cos(radians(b.centro_lon) - radians(o.centro_lon)) +
+                     sin(radians(o.centro_lat)) * sin(radians(b.centro_lat))
+                   ))
+               ))::numeric, 1)
+          END                                             AS distancia_km
         FROM public.comunidade_profissionais p
-        JOIN public.comunidade_bairros b ON b.id = p.bairro_id
-        JOIN public.usuarios u           ON u.id = p.usuario_id
-        CROSS JOIN origem o
+        LEFT JOIN public.comunidade_bairros b ON b.id = p.bairro_id
+        JOIN public.usuarios u                ON u.id = p.usuario_id
+        LEFT JOIN origem o ON true
         WHERE p.ativo AND p.aceita_ser_contatado
           AND p.servico_categoria = %(categoria)s
           AND p.usuario_id <> %(solicitante_id)s
@@ -43,7 +59,10 @@ def ranking(
             SELECT 1 FROM public.comunidade_conexoes c
             WHERE c.solicitante_usuario_id = %(solicitante_id)s AND c.profissional_id = p.id
               AND c.status IN ('pendente','aguardando_profissional','conectado'))
-        ORDER BY distancia_km ASC, random()
+        -- NULLS LAST, e não `distancia_km IS NULL`: alias de saída só resolve no
+        -- ORDER BY quando aparece sozinho; dentro de expressão vira
+        -- "column distancia_km does not exist".
+        ORDER BY distancia_km ASC NULLS LAST, random()
         LIMIT %(limite)s;
     """
     params = {

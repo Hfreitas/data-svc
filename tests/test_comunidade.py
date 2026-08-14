@@ -44,16 +44,37 @@ class TestRankingProfissionais:
         assert kwargs["solicitante_id"] == 5
         assert kwargs["limite"] == 3
 
-    def test_retorna_400_quando_bairro_id_ausente(self, client):
+    @pytest.mark.parametrize("query_extra", [{}, {"bairro_id": "0"}, {"bairro_id": ""}])
+    def test_sem_bairro_busca_por_categoria_e_devolve_distancia_nula(
+        self, client, mock_db_conn, mocker, query_extra
+    ):
+        """Participação na Comunidade é automática e ninguém informa bairro no
+        onboarding, então quase toda a rede tem bairro_id NULL. `0` é o que o nó
+        `Prep Params Comunidade` manda quando não resolveu bairro — os três casos
+        têm que chegar como None na query, não virar 400.
+        """
+        resultado_fake = [
+            {
+                "profissional_id": 10,
+                "nome": "Fulano",
+                "servico_categoria": "motoboy",
+                "servico_descricao": None,
+                "bairro": None,
+                "distancia_km": None,
+                "conexao_id": "11111111-1111-1111-1111-111111111111",
+            }
+        ]
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        ranking_mock = mocker.patch("src.routes.comunidade.q.ranking", return_value=resultado_fake)
+
         resp = client.get(
             "/comunidade/profissionais/ranking",
-            query_string={"categoria": "motoboy", "solicitante_id": 5},
+            query_string={"categoria": "motoboy", "solicitante_id": 5, **query_extra},
         )
 
-        assert resp.status_code == 400
-        data = resp.get_json()
-        assert data["error"] == "bad_request"
-        assert "bairro_id" in data["detail"]
+        assert resp.status_code == 200
+        assert resp.get_json() == resultado_fake
+        assert ranking_mock.call_args.kwargs["bairro_id"] is None
 
     def test_retorna_400_quando_bairro_id_nao_numerico(self, client):
         resp = client.get(
