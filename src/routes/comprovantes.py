@@ -3,7 +3,7 @@ from flask import Blueprint, request
 from src.db import get_db_conn
 from src.cache import cache_get, cache_invalidate_prefix, cache_set
 from src.config import Config
-from src.utils.validators import validate_comprovante_payload, validate_mes, validate_modo
+from src.utils.validators import validate_comprovante_payload, validate_mes, validate_modo, validate_intervalo
 import src.queries.comprovantes as q
 from src.utils.api_response import fail, ok
 
@@ -12,35 +12,57 @@ comprovantes_bp = Blueprint("comprovantes", __name__)
 
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/saldo", methods=["GET"])
 def get_saldo(usuario_id: int):
-    mes = validate_mes(request.args.get("mes"))
-    
-    saldo_mes = cache_get("saldo", f"{usuario_id}:{mes}")
+    # Range explícito (data_inicio+data_fim) tem prioridade; senão cai no filtro por mês.
+    data_inicio = request.args.get("data_inicio")
+    data_fim = request.args.get("data_fim")
+    if data_inicio or data_fim:
+        data_inicio, data_fim = validate_intervalo(data_inicio, data_fim)
+        cache_key = f"{usuario_id}:{data_inicio}:{data_fim}"
+    else:
+        mes = validate_mes(request.args.get("mes"))
+        cache_key = f"{usuario_id}:{mes}"
+
+    saldo_mes = cache_get("saldo", cache_key)
     if saldo_mes:
         return ok(200, saldo_mes)
-    
-    with get_db_conn() as conn:
-        saldo_mes = q.get_saldo(conn, usuario_id, mes)     
 
-        cache_set("saldo", f"{usuario_id}:{mes}", saldo_mes, Config.CACHE_TTL_SALDO)
-        
+    with get_db_conn() as conn:
+        if data_inicio and data_fim:
+            saldo_mes = q.get_saldo(conn, usuario_id, data_inicio=data_inicio, data_fim=data_fim)
+        else:
+            saldo_mes = q.get_saldo(conn, usuario_id, mes)
+
+        cache_set("saldo", cache_key, saldo_mes, Config.CACHE_TTL_SALDO)
+
         return ok(200, saldo_mes)
     
 
 
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes", methods=["GET"])
 def list_comprovantes(usuario_id: int):
-    mes = validate_mes(request.args.get("mes"))
-    modo = validate_modo(request.args.get("modo"))  
-    
-    comprovantes = cache_get("comprovantes", f"{usuario_id}:{mes}:{modo}")
+    modo = validate_modo(request.args.get("modo"))
+    data_inicio = request.args.get("data_inicio")
+    data_fim = request.args.get("data_fim")
+    if data_inicio or data_fim:
+        data_inicio, data_fim = validate_intervalo(data_inicio, data_fim)
+        cache_key = f"{usuario_id}:{data_inicio}:{data_fim}:{modo}"
+    else:
+        mes = validate_mes(request.args.get("mes"))
+        cache_key = f"{usuario_id}:{mes}:{modo}"
+
+    comprovantes = cache_get("comprovantes", cache_key)
     if comprovantes:
         return ok(200, comprovantes)
-    
+
     with get_db_conn() as conn:
-        comprovantes = q.list_comprovantes(conn, usuario_id, mes, modo)
-        
-        cache_set("comprovantes", f"{usuario_id}:{mes}:{modo}", comprovantes, Config.CACHE_TTL_COMPROVANTES)
-        
+        if data_inicio and data_fim:
+            comprovantes = q.list_comprovantes(conn, usuario_id, modo=modo,
+                                               data_inicio=data_inicio, data_fim=data_fim)
+        else:
+            comprovantes = q.list_comprovantes(conn, usuario_id, mes, modo)
+
+        cache_set("comprovantes", cache_key, comprovantes, Config.CACHE_TTL_COMPROVANTES)
+
         return ok(200, comprovantes)
 
 

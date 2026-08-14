@@ -263,3 +263,82 @@ class TestCreateComprovante:
         upsert_args = upsert_mock.call_args.args
         assert upsert_args[2].get("canal_venda") == "iFood"
         assert resp.get_json()["canal_venda"] == "iFood"
+
+
+class TestSaldoPorIntervalo:
+    def test_saldo_por_range_chama_query_com_datas(self, client, mock_db_conn, mocker):
+        usuario_id = 7
+        saldo_fake = {"total_vendas": 50.0, "total_gastos": 0.0, "saldo": 50.0}
+        _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
+        mocker.patch("src.routes.comprovantes.cache_get", return_value=None)
+        get_saldo_mock = mocker.patch("src.routes.comprovantes.q.get_saldo", return_value=saldo_fake)
+        cache_set_mock = mocker.patch("src.routes.comprovantes.cache_set")
+
+        resp = client.get(f"/usuarios/{usuario_id}/saldo?data_inicio=2026-08-14&data_fim=2026-08-14")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == saldo_fake
+        get_saldo_mock.assert_called_once_with(
+            conn, usuario_id, data_inicio="2026-08-14", data_fim="2026-08-14"
+        )
+        cache_set_mock.assert_called_once_with(
+            "saldo", f"{usuario_id}:2026-08-14:2026-08-14", saldo_fake, Config.CACHE_TTL_SALDO
+        )
+
+    def test_saldo_range_prioriza_sobre_mes(self, client, mock_db_conn, mocker):
+        _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
+        mocker.patch("src.routes.comprovantes.cache_get", return_value=None)
+        get_saldo_mock = mocker.patch("src.routes.comprovantes.q.get_saldo", return_value={})
+        mocker.patch("src.routes.comprovantes.cache_set")
+
+        resp = client.get("/usuarios/1/saldo?mes=2026-01&data_inicio=2026-08-01&data_fim=2026-08-31")
+
+        assert resp.status_code == 200
+        get_saldo_mock.assert_called_once_with(
+            conn, 1, data_inicio="2026-08-01", data_fim="2026-08-31"
+        )
+
+    def test_saldo_range_data_invalida_400(self, client):
+        resp = client.get("/usuarios/1/saldo?data_inicio=14-08-2026&data_fim=2026-08-14")
+        assert resp.status_code == 400
+        assert "data_inicio" in resp.get_json()["detail"]
+
+    def test_saldo_range_inicio_maior_que_fim_400(self, client):
+        resp = client.get("/usuarios/1/saldo?data_inicio=2026-08-31&data_fim=2026-08-01")
+        assert resp.status_code == 400
+        assert "data_inicio" in resp.get_json()["detail"]
+
+    def test_saldo_range_incompleto_400(self, client):
+        resp = client.get("/usuarios/1/saldo?data_inicio=2026-08-01")
+        assert resp.status_code == 400
+        assert "data_fim" in resp.get_json()["detail"]
+
+
+class TestListComprovantesPorIntervalo:
+    def test_lista_por_range_chama_query_com_datas(self, client, mock_db_conn, mocker):
+        usuario_id = 7
+        comprovantes_fake = [{"id": 1, "operacao": "venda", "item": "X", "valor_total": 10.0}]
+        _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
+        mocker.patch("src.routes.comprovantes.cache_get", return_value=None)
+        list_mock = mocker.patch("src.routes.comprovantes.q.list_comprovantes", return_value=comprovantes_fake)
+        cache_set_mock = mocker.patch("src.routes.comprovantes.cache_set")
+
+        resp = client.get(
+            f"/usuarios/{usuario_id}/comprovantes?modo=relatorio&data_inicio=2026-08-10&data_fim=2026-08-14"
+        )
+
+        assert resp.status_code == 200
+        assert resp.get_json() == comprovantes_fake
+        list_mock.assert_called_once_with(
+            conn, usuario_id, modo="relatorio", data_inicio="2026-08-10", data_fim="2026-08-14"
+        )
+        cache_set_mock.assert_called_once_with(
+            "comprovantes",
+            f"{usuario_id}:2026-08-10:2026-08-14:relatorio",
+            comprovantes_fake,
+            Config.CACHE_TTL_COMPROVANTES,
+        )
+
+    def test_lista_range_data_invalida_400(self, client):
+        resp = client.get("/usuarios/1/comprovantes?modo=relatorio&data_inicio=xx&data_fim=2026-08-14")
+        assert resp.status_code == 400

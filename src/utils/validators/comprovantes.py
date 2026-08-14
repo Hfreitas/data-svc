@@ -30,6 +30,16 @@ def validate_mes(mes: str) -> str:
     return mes
 
 
+def validate_intervalo(data_inicio: str, data_fim: str) -> tuple[str, str]:
+    """Valida o intervalo ?data_inicio=YYYY-MM-DD&data_fim=YYYY-MM-DD (inclusivo)."""
+    for nome, val in (("data_inicio", data_inicio), ("data_fim", data_fim)):
+        if not val or not re.match(r"^\d{4}-\d{2}-\d{2}$", val):
+            abort(400, description=f"parâmetro '{nome}' deve estar no formato YYYY-MM-DD")
+    if data_inicio > data_fim:
+        abort(400, description="'data_inicio' não pode ser maior que 'data_fim'")
+    return data_inicio, data_fim
+
+
 def validate_modo(modo: str) -> str:
     """Valida o modo de um comprovante em relatorio | gastos | vendas."""
     raw = (modo or "").strip().lower()

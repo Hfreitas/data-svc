@@ -4,8 +4,28 @@ Queries de comprovantes — funções puras que recebem conn + parâmetros e ret
 from psycopg2.extras import RealDictCursor
 
 
-def get_saldo(conn, usuario_id: int, mes: str) -> dict:
-    sql = """
+# Cláusula de intervalo de data por coluna. As strings SQL são fixas (nenhum valor de
+# usuário é interpolado — só datas validadas via placeholder %(...)s), então não há injeção.
+# Range explícito: `data_fim` é inclusivo (usa `< data_fim + 1 dia`). Sem range: mês de `referencia`.
+def _clausula_periodo(coluna: str, usa_range: bool) -> str:
+    if usa_range:
+        return (f"{coluna} >= %(data_inicio)s::date "
+                f"AND {coluna} < (%(data_fim)s::date + INTERVAL '1 day')")
+    return (f"{coluna} >= date_trunc('month', TO_DATE(%(referencia)s, 'YYYY-MM')) "
+            f"AND {coluna} < date_trunc('month', TO_DATE(%(referencia)s, 'YYYY-MM')) + INTERVAL '1 month'")
+
+
+def get_saldo(conn, usuario_id: int, mes: str = None, data_inicio=None, data_fim=None) -> dict:
+    usa_range = bool(data_inicio and data_fim)
+    venda_clause = _clausula_periodo("data_venda", usa_range)
+    gasto_clause = _clausula_periodo("data_compra", usa_range)
+    params = {"usuario_id": usuario_id}
+    if usa_range:
+        params.update({"data_inicio": data_inicio, "data_fim": data_fim})
+    else:
+        params["referencia"] = mes
+
+    sql = f"""
         SELECT
             COALESCE(SUM(CASE WHEN operacao = 'venda' THEN valor_total END), 0)::numeric(14,2) AS total_vendas,
             COALESCE(SUM(CASE WHEN operacao = 'gasto' THEN valor_total END), 0)::numeric(14,2) AS total_gastos,
@@ -14,26 +34,32 @@ def get_saldo(conn, usuario_id: int, mes: str) -> dict:
         FROM public.comprovantes
         WHERE usuario_id = %(usuario_id)s
         AND (
-            (operacao = 'venda'
-            AND data_venda >= date_trunc('month', TO_DATE(%(referencia)s, 'YYYY-MM'))
-            AND data_venda  < date_trunc('month', TO_DATE(%(referencia)s, 'YYYY-MM')) + INTERVAL '1 month')
+            (operacao = 'venda' AND {venda_clause})
             OR
-            (operacao = 'gasto'
-            AND data_compra >= date_trunc('month', TO_DATE(%(referencia)s, 'YYYY-MM'))
-            AND data_compra  < date_trunc('month', TO_DATE(%(referencia)s, 'YYYY-MM')) + INTERVAL '1 month')
+            (operacao = 'gasto' AND {gasto_clause})
         );
     """
-    
+
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-        cursor.execute(sql, {"usuario_id": usuario_id, "referencia": mes})
+        cursor.execute(sql, params)
         row = cursor.fetchone()
         return dict(row)
 
 
-def list_comprovantes(conn, usuario_id: int, mes: str, modo: str) -> list[dict]:
+def list_comprovantes(conn, usuario_id: int, mes: str = None, modo: str = "relatorio",
+                      data_inicio=None, data_fim=None) -> list[dict]:
     modo = modo.strip().lower()
+    usa_range = bool(data_inicio and data_fim)
+    data_expr = ("CASE WHEN operacao = 'gasto' THEN data_compra "
+                 "WHEN operacao = 'venda' THEN data_venda END")
+    periodo_clause = _clausula_periodo(f"({data_expr})", usa_range)
+    params = {"usuario_id": usuario_id, "modo": modo}
+    if usa_range:
+        params.update({"data_inicio": data_inicio, "data_fim": data_fim})
+    else:
+        params["referencia"] = mes
 
-    sql = """
+    sql = f"""
         SELECT
             id,
             operacao,
@@ -42,10 +68,7 @@ def list_comprovantes(conn, usuario_id: int, mes: str, modo: str) -> list[dict]:
             valor_unitario,
             valor_total,
             canal_venda,
-        CASE
-            WHEN operacao = 'gasto' THEN data_compra
-            WHEN operacao = 'venda' THEN data_venda
-        END AS data_lancamento
+            {data_expr} AS data_lancamento
         FROM public.comprovantes
         WHERE usuario_id = %(usuario_id)s
         AND (
@@ -53,19 +76,12 @@ def list_comprovantes(conn, usuario_id: int, mes: str, modo: str) -> list[dict]:
             %(modo)s = 'relatorio'
             OR operacao = %(modo)s  -- 'gastos' → 'gasto'; 'vendas' → 'venda' (normalizar no código)
         )
-        AND CASE
-            WHEN operacao = 'gasto' THEN data_compra
-            WHEN operacao = 'venda' THEN data_venda
-        END >= date_trunc('month', TO_DATE(%(referencia)s, 'YYYY-MM'))
-        AND CASE
-            WHEN operacao = 'gasto' THEN data_compra
-            WHEN operacao = 'venda' THEN data_venda
-        END < date_trunc('month', TO_DATE(%(referencia)s, 'YYYY-MM')) + INTERVAL '1 month'
+        AND {periodo_clause}
         ORDER BY data_lancamento DESC;
     """
-    
+
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-        cursor.execute(sql, {"usuario_id": usuario_id, "modo": modo, "referencia": mes})
+        cursor.execute(sql, params)
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
     

@@ -8,6 +8,7 @@ from .agendamentos import (
 )
 from .comprovantes import (
     validate_comprovante_payload,
+    validate_intervalo,
     validate_mes,
     validate_modo,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "validate_patch_conta_payload",
     "validate_lista_delete_itens_payload",
     "validate_lista_itens_payload",
+    "validate_intervalo",
     "validate_mes",
     "validate_modo",
     "validate_ranking_params",
