@@ -84,6 +84,108 @@ def _upsert_conexao_pendente(conn, solicitante_id: int, profissional_id: int, se
         return str(row["id"])
 
 
+def buscar_bairro(conn, nome: str | None = None, texto: str | None = None) -> dict | None:
+    """Resolve um bairro da Comunidade.
+
+    `nome`  — nome dito explicitamente (match exato, senão LIKE).
+    `texto` — mensagem livre do usuário; casa qualquer bairro citado dentro dela e
+              devolve a ÚLTIMA menção (maior `position`), que é a mais recente na frase.
+              Substitui a lista de bairros hardcoded que vivia no n8n.
+    """
+    if nome:
+        sql = """
+            SELECT id, nome, cidade, uf, centro_lat, centro_lon
+            FROM public.comunidade_bairros
+            WHERE ativo AND (lower(nome) = lower(%(nome)s)
+                             OR lower(nome) LIKE '%%' || lower(%(nome)s) || '%%')
+            ORDER BY (lower(nome) = lower(%(nome)s)) DESC
+            LIMIT 1;
+        """
+        params = {"nome": nome}
+    else:
+        sql = """
+            SELECT id, nome, cidade, uf, centro_lat, centro_lon
+            FROM public.comunidade_bairros
+            WHERE ativo AND position(lower(nome) in lower(%(texto)s)) > 0
+            ORDER BY position(lower(nome) in lower(%(texto)s)) DESC
+            LIMIT 1;
+        """
+        params = {"texto": texto}
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def conexoes_do_usuario(conn, solicitante_id: int, limite: int = 30) -> list:
+    """Histórico de conexões do solicitante, com os dois lados já montados em JSON."""
+    sql = """
+        SELECT
+          c.id, c.status, c.profissional_resposta, c.servico_contexto,
+          c.created_at AS data_conexao, c.conectado_em,
+          jsonb_build_object(
+            'nome', COALESCE(ps.nome_exibicao, us.nome),
+            'telefone', us.numero_telefone,
+            'negocio', COALESCE(us.razao_social, ps.nome_exibicao, us.nome)
+          ) AS profissional_1,
+          jsonb_build_object(
+            'nome', COALESCE(pp.nome_exibicao, up.nome),
+            'telefone', up.numero_telefone,
+            'negocio', COALESCE(up.razao_social, pp.nome_exibicao, up.nome),
+            'profissional_id', pp.id
+          ) AS profissional_2
+        FROM public.comunidade_conexoes c
+        JOIN public.comunidade_profissionais pp ON pp.id = c.profissional_id
+        JOIN public.usuarios up                 ON up.id = pp.usuario_id
+        JOIN public.usuarios us                 ON us.id = c.solicitante_usuario_id
+        LEFT JOIN public.comunidade_profissionais ps ON ps.usuario_id = c.solicitante_usuario_id
+        WHERE c.solicitante_usuario_id = %(solicitante_id)s
+        ORDER BY c.updated_at DESC
+        LIMIT %(limite)s;
+    """
+    params = {"solicitante_id": solicitante_id, "limite": limite}
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+def conexao_pendente_por_telefone(conn, telefone: str) -> dict | None:
+    """Conexão aguardando o SIM do indicado, buscada pelo telefone DELE.
+
+    Comparação com os dois lados normalizados (só dígitos) — o telefone chega do
+    WhatsApp sem máscara e o cadastro pode ter máscara.
+    """
+    sql = """
+        SELECT
+          c.id, c.status, c.solicitante_usuario_id, c.profissional_id, c.servico_contexto,
+          regexp_replace(us.numero_telefone, '\\D', '', 'g') AS solicitante_telefone,
+          us.nome                                            AS solicitante_nome,
+          COALESCE(us.razao_social, us.nome)                 AS solicitante_negocio,
+          regexp_replace(up.numero_telefone, '\\D', '', 'g') AS indicado_telefone,
+          COALESCE(pp.nome_exibicao, up.nome)                AS indicado_nome,
+          COALESCE(up.razao_social, pp.nome_exibicao, up.nome) AS indicado_negocio,
+          pp.usuario_id                                      AS indicado_usuario_id
+        FROM public.comunidade_conexoes c
+        JOIN public.comunidade_profissionais pp ON pp.id = c.profissional_id
+        JOIN public.usuarios up                 ON up.id = pp.usuario_id
+        JOIN public.usuarios us                 ON us.id = c.solicitante_usuario_id
+        WHERE c.status = 'aguardando_profissional'
+          AND COALESCE(c.profissional_resposta, false) = false
+          AND regexp_replace(up.numero_telefone, '\\D', '', 'g')
+              = regexp_replace(%(telefone)s, '\\D', '', 'g')
+        ORDER BY c.updated_at DESC
+        LIMIT 1;
+    """
+    params = {"telefone": telefone}
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
 def responder_solicitante(conn, conexao_id, resposta: bool) -> dict | None:
     sql = """
         UPDATE public.comunidade_conexoes

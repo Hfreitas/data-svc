@@ -12,7 +12,13 @@ from .comprovantes import (
     validate_mes,
     validate_modo,
 )
-from .comunidade import validate_ranking_params, validate_resposta_conexao_payload
+from .comunidade import (
+    validate_bairro_lookup_params,
+    validate_ranking_params,
+    validate_resposta_conexao_payload,
+    validate_solicitante_id,
+    validate_telefone_param,
+)
 from .contas import validate_conta_recorrente_payload, validate_patch_conta_payload
 from .listas import (
     validate_lista_delete_itens_payload,
@@ -24,6 +30,9 @@ from .validators import require_fields
 __all__ = [
     "require_fields",
     "validate_agendamento_payload",
+    "validate_bairro_lookup_params",
+    "validate_solicitante_id",
+    "validate_telefone_param",
     "validate_comprovante_payload",
     "validate_conflict_check_params",
     "validate_conta_recorrente_payload",

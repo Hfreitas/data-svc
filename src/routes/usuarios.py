@@ -73,6 +73,7 @@ def update_usuario(usuario_id: int):
         "perfil_tipo", "eh_mei", "profissao", "modalidade",
         "conselho_sigla", "conselho_uf", "conselho_numero",
         "uf", "municipio", "followup_agendado", "followup_timestamp",
+        "data_ultimo_contato",
     }
 
     # Validar campos de agenda primeiro para coerção de tipos

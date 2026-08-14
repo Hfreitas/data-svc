@@ -1,3 +1,18 @@
+import pytest
+
+from src.cache import cache_invalidate
+from src.routes.comunidade import _BAIRRO_NS
+
+
+@pytest.fixture(autouse=True)
+def _limpa_cache_bairro():
+    # O cache de bairro é L1 de processo e vive entre testes; sem isso um teste
+    # contamina o próximo (o 404 do miss viraria hit do teste anterior).
+    cache_invalidate(_BAIRRO_NS)
+    yield
+    cache_invalidate(_BAIRRO_NS)
+
+
 class TestRankingProfissionais:
     def test_ranking_retorna_200_com_lista_mockada(self, client, mock_db_conn, mocker):
         resultado_fake = [
@@ -117,6 +132,171 @@ class TestRankingProfissionais:
         data = resp.get_json()
         assert data["error"] == "bad_request"
         assert "limit" in data["detail"]
+
+
+class TestResolverBairro:
+    BAIRRO = {
+        "id": 1, "nome": "Centro", "cidade": "Salvador", "uf": "BA",
+        "centro_lat": -12.97, "centro_lon": -38.5,
+    }
+
+    def test_por_nome_retorna_200(self, client, mock_db_conn, mocker):
+        _, conn = mock_db_conn("src.routes.comunidade.get_db_conn")
+        buscar = mocker.patch("src.routes.comunidade.q.buscar_bairro", return_value=self.BAIRRO)
+
+        resp = client.get("/comunidade/bairros", query_string={"nome": "centro"})
+
+        assert resp.status_code == 200
+        assert resp.get_json() == self.BAIRRO
+        assert buscar.call_args.args[0] is conn
+        assert buscar.call_args.kwargs == {"nome": "centro", "texto": None}
+
+    def test_por_texto_livre_retorna_200(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        buscar = mocker.patch("src.routes.comunidade.q.buscar_bairro", return_value=self.BAIRRO)
+
+        resp = client.get(
+            "/comunidade/bairros",
+            query_string={"texto": "preciso de um eletricista no centro"},
+        )
+
+        assert resp.status_code == 200
+        assert buscar.call_args.kwargs == {
+            "nome": None, "texto": "preciso de um eletricista no centro",
+        }
+
+    def test_nome_prevalece_sobre_texto(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        buscar = mocker.patch("src.routes.comunidade.q.buscar_bairro", return_value=self.BAIRRO)
+
+        resp = client.get(
+            "/comunidade/bairros", query_string={"nome": "Pituba", "texto": "no centro"}
+        )
+
+        assert resp.status_code == 200
+        assert buscar.call_args.kwargs == {"nome": "Pituba", "texto": None}
+
+    def test_texto_e_truncado_em_500_chars(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        buscar = mocker.patch("src.routes.comunidade.q.buscar_bairro", return_value=self.BAIRRO)
+
+        client.get("/comunidade/bairros", query_string={"texto": "a" * 900})
+
+        assert len(buscar.call_args.kwargs["texto"]) == 500
+
+    def test_segunda_chamada_vem_do_cache_sem_tocar_o_banco(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        buscar = mocker.patch("src.routes.comunidade.q.buscar_bairro", return_value=self.BAIRRO)
+
+        primeira = client.get("/comunidade/bairros", query_string={"nome": "centro"})
+        segunda = client.get("/comunidade/bairros", query_string={"nome": "centro"})
+
+        assert primeira.get_json() == segunda.get_json() == self.BAIRRO
+        buscar.assert_called_once()
+
+    def test_miss_nao_e_cacheado(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        buscar = mocker.patch("src.routes.comunidade.q.buscar_bairro", return_value=None)
+
+        assert client.get("/comunidade/bairros", query_string={"nome": "xpto"}).status_code == 404
+        assert client.get("/comunidade/bairros", query_string={"nome": "xpto"}).status_code == 404
+        assert buscar.call_count == 2
+
+    def test_retorna_404_quando_bairro_nao_existe(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        mocker.patch("src.routes.comunidade.q.buscar_bairro", return_value=None)
+
+        resp = client.get("/comunidade/bairros", query_string={"nome": "xpto"})
+
+        assert resp.status_code == 404
+        assert resp.get_json()["error"] == "bairro_nao_encontrado"
+
+    def test_retorna_400_sem_nome_e_sem_texto(self, client):
+        resp = client.get("/comunidade/bairros")
+
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "bad_request"
+
+
+class TestListarConexoes:
+    def test_retorna_200_com_lista(self, client, mock_db_conn, mocker):
+        _, conn = mock_db_conn("src.routes.comunidade.get_db_conn")
+        fake = [{"id": "abc", "status": "conectado", "profissional_2": {"nome": "Fulano"}}]
+        listar = mocker.patch("src.routes.comunidade.q.conexoes_do_usuario", return_value=fake)
+
+        resp = client.get("/comunidade/conexoes", query_string={"solicitante_id": 5})
+
+        assert resp.status_code == 200
+        assert resp.get_json() == fake
+        assert listar.call_args.args == (conn, 5)
+
+    def test_lista_vazia_retorna_200(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        mocker.patch("src.routes.comunidade.q.conexoes_do_usuario", return_value=[])
+
+        resp = client.get("/comunidade/conexoes", query_string={"solicitante_id": 5})
+
+        assert resp.status_code == 200
+        assert resp.get_json() == []
+
+    def test_retorna_400_sem_solicitante_id(self, client):
+        resp = client.get("/comunidade/conexoes")
+
+        assert resp.status_code == 400
+        assert "solicitante_id" in resp.get_json()["detail"]
+
+
+class TestConexaoPendente:
+    PENDENTE = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "status": "aguardando_profissional",
+        "solicitante_usuario_id": 5,
+        "indicado_usuario_id": 9,
+    }
+
+    def test_retorna_200(self, client, mock_db_conn, mocker):
+        _, conn = mock_db_conn("src.routes.comunidade.get_db_conn")
+        buscar = mocker.patch(
+            "src.routes.comunidade.q.conexao_pendente_por_telefone", return_value=self.PENDENTE
+        )
+
+        resp = client.get(
+            "/comunidade/conexoes/pendente", query_string={"telefone": "5571999998888"}
+        )
+
+        assert resp.status_code == 200
+        assert resp.get_json() == self.PENDENTE
+        assert buscar.call_args.args == (conn, "5571999998888")
+
+    def test_telefone_com_mascara_e_normalizado(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        buscar = mocker.patch(
+            "src.routes.comunidade.q.conexao_pendente_por_telefone", return_value=self.PENDENTE
+        )
+
+        resp = client.get(
+            "/comunidade/conexoes/pendente", query_string={"telefone": "+55 (71) 99999-8888"}
+        )
+
+        assert resp.status_code == 200
+        assert buscar.call_args.args[1] == "5571999998888"
+
+    def test_retorna_404_quando_nao_ha_pendencia(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        mocker.patch("src.routes.comunidade.q.conexao_pendente_por_telefone", return_value=None)
+
+        resp = client.get(
+            "/comunidade/conexoes/pendente", query_string={"telefone": "5571999998888"}
+        )
+
+        assert resp.status_code == 404
+        assert resp.get_json()["error"] == "conexao_pendente_nao_encontrada"
+
+    def test_retorna_400_com_telefone_curto(self, client):
+        resp = client.get("/comunidade/conexoes/pendente", query_string={"telefone": "123"})
+
+        assert resp.status_code == 400
+        assert "telefone" in resp.get_json()["detail"]
 
 
 class TestResponderConexao:
