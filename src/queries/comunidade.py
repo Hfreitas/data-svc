@@ -204,7 +204,7 @@ def cancelar_conexoes(conn, solicitante_id: int, conexao_id: str | None = None) 
         WHERE solicitante_usuario_id = %(solicitante_id)s
           AND (id::text = %(conexao_id)s
                OR status IN ('pendente','aguardando_profissional'))
-        RETURNING id, status;
+        RETURNING id::text, status;
     """
     params = {"solicitante_id": solicitante_id, "conexao_id": conexao_id}
 
@@ -219,7 +219,7 @@ def responder_solicitante(conn, conexao_id, resposta: bool) -> dict | None:
         SET status = CASE WHEN %(resposta)s THEN 'aguardando_profissional' ELSE 'recusado_solicitante' END,
             solicitante_resposta = %(resposta)s, solicitante_respondeu_em = now(), updated_at = now()
         WHERE id = %(conexao_id)s AND status = 'pendente'
-        RETURNING id, status;
+        RETURNING id::text, status;
     """
     params = {"conexao_id": conexao_id, "resposta": resposta}
 
@@ -250,7 +250,7 @@ def responder_profissional(conn, conexao_id, resposta: bool, conectar: bool = Tr
             conectado_em = CASE WHEN %(resposta)s AND %(conectar)s THEN now() ELSE NULL END,
             updated_at = now()
         WHERE id = %(conexao_id)s AND status = 'aguardando_profissional'
-        RETURNING id, status, profissional_resposta, solicitante_usuario_id;
+        RETURNING id::text, status, profissional_resposta, solicitante_usuario_id;
     """
     params = {"conexao_id": conexao_id, "resposta": resposta, "conectar": conectar}
 

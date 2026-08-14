@@ -92,6 +92,11 @@ def responder_conexao(conexao_id):
 
     body = validate_resposta_conexao_payload(body)
 
+    # O converter <uuid:...> entrega um uuid.UUID, e psycopg2 não adapta esse tipo
+    # sem register_uuid() ("can't adapt type 'UUID'" → 500). Texto o Postgres casta
+    # sozinho no `id = %(conexao_id)s`.
+    conexao_id = str(conexao_id)
+
     with get_db_conn() as conn:
         if body["etapa"] == 1:
             resultado = q.responder_solicitante(conn, conexao_id, body["resposta"])

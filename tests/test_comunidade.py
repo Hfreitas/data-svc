@@ -340,6 +340,24 @@ class TestResponderConexao:
         solicitante_mock.assert_called_once()
         profissional_mock.assert_not_called()
 
+    def test_conexao_id_chega_na_query_como_str(self, client, mock_db_conn, mocker):
+        """Regressão: o converter <uuid:...> entrega uuid.UUID, que psycopg2 não
+        adapta ("can't adapt type 'UUID'") — a rota virava 500 em produção."""
+        mock_db_conn("src.routes.comunidade.get_db_conn")
+        solicitante_mock = mocker.patch(
+            "src.routes.comunidade.q.responder_solicitante",
+            return_value={"id": self.CONEXAO_ID, "status": "aguardando_profissional"},
+        )
+
+        client.patch(
+            f"/comunidade/conexoes/{self.CONEXAO_ID}/resposta",
+            json={"etapa": 1, "resposta": True},
+        )
+
+        recebido = solicitante_mock.call_args.args[1]
+        assert isinstance(recebido, str)
+        assert recebido == self.CONEXAO_ID
+
     def test_etapa_1_resposta_false_retorna_200(self, client, mock_db_conn, mocker):
         resultado_fake = {"id": self.CONEXAO_ID, "status": "recusado_solicitante"}
         mock_db_conn("src.routes.comunidade.get_db_conn")
