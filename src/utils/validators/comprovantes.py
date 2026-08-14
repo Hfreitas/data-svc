@@ -87,7 +87,25 @@ def validate_comprovante_payload(body: dict) -> dict:
     if operacao == "gasto" and not data_compra:
         abort(400, description="o campo 'data_compra' é obrigatório para operacao='gasto'")
 
+    # PL fields (optional — MEI doesn't use them)
+    def _normalize_optional_field(value):
+        if value is None or value == "":
+            return None
+        normalized = str(value).strip()
+        return normalized if normalized else None
+
+    pagador_nome = _normalize_optional_field(body.get("pagador_nome"))
+    pagador_cpf = _normalize_optional_field(body.get("pagador_cpf"))
+    atendido_nome = _normalize_optional_field(body.get("atendido_nome"))
+    atendido_cpf = _normalize_optional_field(body.get("atendido_cpf"))
+    natureza_pagamento = _normalize_optional_field(body.get("natureza_pagamento"))
+
     body["operacao"] = operacao
     body["item"] = item
     body["item_hash"] = item_hash
+    body["pagador_nome"] = pagador_nome
+    body["pagador_cpf"] = pagador_cpf
+    body["atendido_nome"] = atendido_nome
+    body["atendido_cpf"] = atendido_cpf
+    body["natureza_pagamento"] = natureza_pagamento
     return body

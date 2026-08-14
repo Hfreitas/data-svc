@@ -49,16 +49,65 @@ def create_comprovante(usuario_id: int):
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         return fail("body_invalido", "JSON inválido ou ausente", 400)
-    
+
     body = validate_comprovante_payload(body)
-    
+
     with get_db_conn() as conn:
         comprovante = q.upsert(conn, usuario_id, body)
-        
+
         cache_invalidate_prefix("saldo", f"{usuario_id}:")
         cache_invalidate_prefix("comprovantes", f"{usuario_id}:")
-        
-        return ok(200, comprovante)
-        
 
-    
+        return ok(200, comprovante)
+
+
+@comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/ultimo", methods=["PATCH"])
+def patch_comprovante_ultimo(usuario_id: int):
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return fail("body_invalido", "JSON inválido ou ausente", 400)
+
+    valor_total = body.get("valor_total")
+    item = body.get("item")
+
+    with get_db_conn() as conn:
+        comprovante = q.update_ultimo(conn, usuario_id, valor_total, item)
+
+        if not comprovante:
+            return fail("nao_encontrado", "Nenhum comprovante encontrado para este usuário", 404)
+
+        cache_invalidate_prefix("saldo", f"{usuario_id}:")
+        cache_invalidate_prefix("comprovantes", f"{usuario_id}:")
+
+        return ok(200, comprovante)
+
+
+@comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/ultimo", methods=["DELETE"])
+def delete_comprovante_ultimo(usuario_id: int):
+    with get_db_conn() as conn:
+        result = q.delete_ultimo(conn, usuario_id)
+
+        if not result:
+            return fail("nao_encontrado", "Nenhum comprovante encontrado para este usuário", 404)
+
+        cache_invalidate_prefix("saldo", f"{usuario_id}:")
+        cache_invalidate_prefix("comprovantes", f"{usuario_id}:")
+
+        return ok(200, result)
+
+
+@comprovantes_bp.route("/usuarios/<int:usuario_id>/livro-caixa", methods=["GET"])
+def get_livro_caixa(usuario_id: int):
+    mes = validate_mes(request.args.get("mes"))
+
+    livro_caixa = cache_get("livro-caixa", f"{usuario_id}:{mes}")
+    if livro_caixa:
+        return ok(200, livro_caixa)
+
+    with get_db_conn() as conn:
+        livro_caixa = q.get_livro_caixa(conn, usuario_id, mes)
+
+        cache_set("livro-caixa", f"{usuario_id}:{mes}", livro_caixa, Config.CACHE_TTL_COMPROVANTES)
+
+        return ok(200, livro_caixa)
+
