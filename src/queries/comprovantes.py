@@ -158,6 +158,24 @@ def delete_ultimo(conn, usuario_id: int) -> dict | None:
         return dict(row) if row else None
 
 
+def get_ultimo(conn, usuario_id: int) -> dict | None:
+    """Retorna o último comprovante de um usuário (por last_update DESC)."""
+    params = {"usuario_id": usuario_id}
+
+    sql = """
+        SELECT id, operacao, item, quantidade, valor_unitario, valor_total,
+               to_char(COALESCE(data_venda, data_compra),'DD/MM/YY') AS data_fmt,
+               pagador_nome, atendido_nome, natureza_pagamento
+        FROM public.comprovantes
+        WHERE usuario_id=%(usuario_id)s
+        ORDER BY last_update DESC LIMIT 1;
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, params)
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
 def get_livro_caixa(conn, usuario_id: int, mes: str) -> dict:
     """Agrega dados do livro de caixa para um mês específico."""
     params = {

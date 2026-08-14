@@ -61,6 +61,23 @@ def create_comprovante(usuario_id: int):
         return ok(200, comprovante)
 
 
+@comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/ultimo", methods=["GET"])
+def get_comprovante_ultimo(usuario_id: int):
+    comprovante = cache_get("comprovantes_ultimo", f"{usuario_id}")
+    if comprovante:
+        return ok(200, comprovante)
+
+    with get_db_conn() as conn:
+        comprovante = q.get_ultimo(conn, usuario_id)
+
+        if not comprovante:
+            return fail("comprovante_nao_encontrado", "Nenhum comprovante encontrado para este usuário", 404)
+
+        cache_set("comprovantes_ultimo", f"{usuario_id}", comprovante, Config.CACHE_TTL_COMPROVANTES)
+
+        return ok(200, comprovante)
+
+
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/ultimo", methods=["PATCH"])
 def patch_comprovante_ultimo(usuario_id: int):
     body = request.get_json(silent=True)
@@ -78,6 +95,7 @@ def patch_comprovante_ultimo(usuario_id: int):
 
         cache_invalidate_prefix("saldo", f"{usuario_id}:")
         cache_invalidate_prefix("comprovantes", f"{usuario_id}:")
+        cache_invalidate_prefix("comprovantes_ultimo", f"{usuario_id}")
 
         return ok(200, comprovante)
 
@@ -92,6 +110,7 @@ def delete_comprovante_ultimo(usuario_id: int):
 
         cache_invalidate_prefix("saldo", f"{usuario_id}:")
         cache_invalidate_prefix("comprovantes", f"{usuario_id}:")
+        cache_invalidate_prefix("comprovantes_ultimo", f"{usuario_id}")
 
         return ok(200, result)
 

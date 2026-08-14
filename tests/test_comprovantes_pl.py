@@ -197,6 +197,46 @@ class TestComprovantePLQueries:
 
         assert result is None
 
+    def test_get_ultimo_success(self, mocker):
+        """Testa que get_ultimo retorna o último comprovante."""
+        mock_cursor = MagicMock()
+        mock_row = {
+            "id": 99,
+            "operacao": "venda",
+            "item": "Consultoria",
+            "quantidade": 1,
+            "valor_unitario": Decimal("100.00"),
+            "valor_total": Decimal("100.00"),
+            "data_fmt": "10/01/25",
+            "pagador_nome": "João Silva",
+            "atendido_nome": "Maria Santos",
+            "natureza_pagamento": "Prestação de Serviço",
+        }
+        mock_cursor.fetchone.return_value = mock_row
+
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+        result = q.get_ultimo(mock_conn, 123)
+
+        assert result["id"] == 99
+        assert result["item"] == "Consultoria"
+        assert result["valor_total"] == Decimal("100.00")
+        assert result["pagador_nome"] == "João Silva"
+        assert result["data_fmt"] == "10/01/25"
+
+    def test_get_ultimo_returns_none_when_not_found(self, mocker):
+        """Testa que get_ultimo retorna None quando nenhum comprovante existe."""
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+        result = q.get_ultimo(mock_conn, 999)
+
+        assert result is None
+
     def test_get_livro_caixa_aggregation(self, mocker):
         """Testa que get_livro_caixa retorna agregação correta."""
         mock_cursor = MagicMock()
@@ -227,6 +267,72 @@ class TestComprovantePLQueries:
 
 class TestComprovantePLRoutes:
     """Tests for PL-related route endpoints."""
+
+    def test_get_comprovante_ultimo_success(self, client, mocker):
+        """Testa GET /usuarios/<id>/comprovantes/ultimo com sucesso."""
+        def get_db_conn_context():
+            ctx = MagicMock()
+            ctx.__enter__.return_value = MagicMock()
+            ctx.__exit__.return_value = False
+            return ctx
+
+        mocker.patch(
+            "src.routes.comprovantes.get_db_conn",
+            return_value=get_db_conn_context(),
+        )
+
+        mock_comprovante = {
+            "id": 99,
+            "operacao": "venda",
+            "item": "Consultoria",
+            "quantidade": 1,
+            "valor_unitario": Decimal("100.00"),
+            "valor_total": Decimal("100.00"),
+            "data_fmt": "10/01/25",
+            "pagador_nome": "João Silva",
+            "atendido_nome": "Maria Santos",
+            "natureza_pagamento": "Prestação de Serviço",
+        }
+        mocker.patch("src.routes.comprovantes.q.get_ultimo", return_value=mock_comprovante)
+        mocker.patch("src.routes.comprovantes.cache_get", return_value=None)
+        mocker.patch("src.routes.comprovantes.cache_set")
+
+        resp = client.get(
+            "/usuarios/123/comprovantes/ultimo",
+            headers={"X-API-Key": "test-key"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["id"] == 99
+        assert data["item"] == "Consultoria"
+        assert data["valor_total"] == 100.00
+        assert data["pagador_nome"] == "João Silva"
+
+    def test_get_comprovante_ultimo_not_found(self, client, mocker):
+        """Testa GET /usuarios/<id>/comprovantes/ultimo retorna 404."""
+        def get_db_conn_context():
+            ctx = MagicMock()
+            ctx.__enter__.return_value = MagicMock()
+            ctx.__exit__.return_value = False
+            return ctx
+
+        mocker.patch(
+            "src.routes.comprovantes.get_db_conn",
+            return_value=get_db_conn_context(),
+        )
+
+        mocker.patch("src.routes.comprovantes.q.get_ultimo", return_value=None)
+        mocker.patch("src.routes.comprovantes.cache_get", return_value=None)
+
+        resp = client.get(
+            "/usuarios/999/comprovantes/ultimo",
+            headers={"X-API-Key": "test-key"},
+        )
+
+        assert resp.status_code == 404
+        data = resp.get_json()
+        assert data["error"] == "comprovante_nao_encontrado"
 
     def test_patch_comprovante_ultimo_success(self, client, mocker):
         """Testa PATCH /usuarios/<id>/comprovantes/ultimo com sucesso."""
