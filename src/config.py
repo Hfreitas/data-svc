@@ -37,7 +37,14 @@ class Config:
     # Embeddings always via OpenAI (1536 dims fixed in DB). Falls back to OPENAI_API_KEY if not set.
     EMBEDDINGS_API_KEY: str = os.environ.get("EMBEDDINGS_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
     EMBEDDING_MODEL: str = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
-    RAG_MATCH_THRESHOLD: float = float(os.environ.get("RAG_MATCH_THRESHOLD", "0.7"))
+    # 0.4, não 0.7. O 0.7 era o default histórico e ZERA o retrieval com
+    # text-embedding-3-small nesta base: a rota devolve 200 {"resultados": []}
+    # sem erro nenhum, o serviço parece saudável e o agente responde sem
+    # fundamento. Medido em 2026-08-17 nos dois backends (pgvector e Upstash):
+    # recall 0,92 a 0.4 e 0,84 a 0.5, com vazamento de perfil 0,0% em ambos —
+    # subir o corte não compra precisão, só apaga resultado. STG e PRD já
+    # rodam 0.4 pela env; este default é o que vale em máquina nova e no CI.
+    RAG_MATCH_THRESHOLD: float = float(os.environ.get("RAG_MATCH_THRESHOLD", "0.4"))
     RAG_MATCH_COUNT: int = int(os.environ.get("RAG_MATCH_COUNT", "5"))
 
     # Backend de busca vetorial. `pgvector` (default) = tabela documents no
