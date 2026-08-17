@@ -656,11 +656,31 @@ class TestExpiracaoDeIrmasPendentes:
         assert resultado is None
         assert len(cur.executados) == 1
 
-    def test_ranking_esconde_pendente_so_dentro_do_ttl(self):
+    def test_ranking_esconde_so_vinculo_real(self):
+        """`pendente` não pode filtrar: com 3 profissionais na categoria, a segunda
+        busca do mesmo dia devolvia 0 linhas e o prompt respondia "ainda não temos
+        ninguém dessa categoria" — negar a rede é pior que repetir um nome.
+        """
         cur = _FakeCursor([])
         q_comunidade.ranking(_FakeConn(cur), categoria="motoboy", solicitante_id=5)
 
         sql, params = cur.executados[0]
         assert "c.status IN ('aguardando_profissional','conectado')" in sql
-        assert "c.updated_at > now() - (%(pendente_ttl)s)::interval" in sql
-        assert params["pendente_ttl"] == q_comunidade.PENDENTE_TTL
+        assert "c.status = 'pendente'" not in sql.split("LEFT JOIN LATERAL")[0]
+        assert "pendente_ttl" not in sql
+        assert "pendente_ttl" not in params
+
+    def test_ranking_desprioriza_quem_ja_foi_exibido(self):
+        """Variedade vira ordenação: inédito primeiro (NULLS FIRST), depois o visto
+        há mais tempo. Proximidade continua desempatando dentro de cada grupo.
+        """
+        cur = _FakeCursor([])
+        q_comunidade.ranking(_FakeConn(cur), categoria="motoboy", solicitante_id=5)
+
+        sql, _ = cur.executados[0]
+        assert "max(c2.updated_at) AS visto_em" in sql
+        assert "c2.status = 'pendente'" in sql
+        assert (
+            "ORDER BY vis.visto_em ASC NULLS FIRST, distancia_km ASC NULLS LAST, random()"
+            in sql
+        )

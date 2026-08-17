@@ -5,12 +5,6 @@ Queries de Comunidade MEIrelles — matching entre profissionais MEI cadastrados
 from psycopg2.extras import RealDictCursor
 
 
-# Janela em que um profissional já exibido não reaparece no ranking do mesmo
-# solicitante. Curta de propósito: serve para dar variedade entre buscas
-# seguidas, não para banir alguém da rede.
-PENDENTE_TTL = "24 hours"
-
-
 def ranking(
     conn,
     categoria: str,
@@ -29,6 +23,10 @@ def ranking(
 
     Quem tem bairro e origem conhecida ganha `distancia_km` e vem primeiro; o resto
     entra depois, em ordem aleatória, com `distancia_km = null`.
+
+    Quem já foi exibido antes ao mesmo solicitante entra por último, mas entra —
+    nunca some do resultado. Só vínculo real (`aguardando_profissional`/`conectado`)
+    esconde alguém.
     """
     sql = """
         WITH origem AS (
@@ -58,25 +56,34 @@ def ranking(
         LEFT JOIN public.comunidade_bairros b ON b.id = p.bairro_id
         JOIN public.usuarios u                ON u.id = p.usuario_id
         LEFT JOIN origem o ON true
+        -- `pendente` significa "já te mostrei essa pessoa", não "vocês têm vínculo",
+        -- então ele pesa na ORDEM e não no filtro. Escondendo, uma rede pequena
+        -- zerava: com 3 psicólogos cadastrados, a segunda busca do mesmo dia
+        -- devolvia 0 linhas e o prompt aplicava ANTI-ALUCINAÇÃO -> "ainda não temos
+        -- psicólogos na Comunidade". Repetir um nome é melhor que negar a rede.
+        LEFT JOIN LATERAL (
+          SELECT max(c2.updated_at) AS visto_em
+          FROM public.comunidade_conexoes c2
+          WHERE c2.solicitante_usuario_id = %(solicitante_id)s
+            AND c2.profissional_id = p.id
+            AND c2.status = 'pendente'
+        ) vis ON true
         WHERE p.ativo AND p.aceita_ser_contatado
           AND p.servico_categoria = %(categoria)s
           AND p.usuario_id <> %(solicitante_id)s
           AND NOT EXISTS (
             SELECT 1 FROM public.comunidade_conexoes c
             WHERE c.solicitante_usuario_id = %(solicitante_id)s AND c.profissional_id = p.id
-              AND (
-                c.status IN ('aguardando_profissional','conectado')
-                -- `pendente` só esconde por %(pendente_ttl)s: essa linha significa
-                -- "já te mostrei essa pessoa", não "vocês têm vínculo". Sem prazo,
-                -- uma busca que o usuário simplesmente ignorou apagava aqueles
-                -- profissionais da rede dele para sempre.
-                OR (c.status = 'pendente'
-                    AND c.updated_at > now() - (%(pendente_ttl)s)::interval)
-              ))
+              AND c.status IN ('aguardando_profissional','conectado'))
+        -- NULLS FIRST em visto_em é o oposto do NULLS LAST de distancia_km logo ao
+        -- lado, e os dois estão certos: distancia NULL = "não sei onde fica" (pior
+        -- candidato), visto_em NULL = "nunca mostrei" (melhor candidato). Depois dos
+        -- inéditos vêm os vistos há mais tempo.
+        --
         -- NULLS LAST, e não `distancia_km IS NULL`: alias de saída só resolve no
         -- ORDER BY quando aparece sozinho; dentro de expressão vira
         -- "column distancia_km does not exist".
-        ORDER BY distancia_km ASC NULLS LAST, random()
+        ORDER BY vis.visto_em ASC NULLS FIRST, distancia_km ASC NULLS LAST, random()
         LIMIT %(limite)s;
     """
     params = {
@@ -84,7 +91,6 @@ def ranking(
         "categoria": categoria,
         "solicitante_id": solicitante_id,
         "limite": limite,
-        "pendente_ttl": PENDENTE_TTL,
     }
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
