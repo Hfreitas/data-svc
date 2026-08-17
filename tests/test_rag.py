@@ -230,3 +230,83 @@ class TestBackendUpstash:
         client.post("/rag/busca", json={"pergunta": "DAS?", "perfil": "mei"})
 
         assert "[rag]" not in capsys.readouterr().out
+
+
+class TestPerfilViaMetadataFilter:
+    """Os nós n8n vivos mandam `metadata_filter: {perfil: [...]}`, não `perfil`.
+
+    A rota só lia `body["perfil"]`, e `metadata_filter` nunca existiu no histórico
+    dela — ou seja, em produção `perfil` sempre chegou None. Efeitos: no pgvector
+    a cláusula de filtro nunca entrava (PL recebia chunk de DAS) e no backend
+    upstash todo request degradava para o Postgres, tornando o cutover um no-op.
+    """
+
+    @staticmethod
+    def _preparar(mocker, backend="pgvector"):
+        mocker.patch.object(Config, "RAG_BACKEND", backend)
+        mocker.patch("src.routes.rag.redis_cache.cache_get", return_value=None)
+        mocker.patch("src.routes.rag.redis_cache.cache_set")
+        emb = mocker.MagicMock()
+        emb.data = [mocker.MagicMock(embedding=[0.1])]
+        fake = mocker.MagicMock()
+        fake.embeddings.create.return_value = emb
+        mocker.patch("src.routes.rag._get_client", return_value=fake)
+
+    def test_metadata_filter_define_o_perfil_no_pgvector(self, client, mock_db_conn, mocker):
+        self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        pg = mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={
+            "pergunta": "DAS?", "metadata_filter": {"perfil": ["mei"]}, "match_count": 5
+        })
+
+        assert pg.call_args.args[-1] == "mei"
+
+    def test_metadata_filter_alimenta_o_namespace_da_upstash(self, client, mock_db_conn, mocker):
+        # é o que faz o cutover deixar de ser no-op: sem perfil, vector levanta
+        self._preparar(mocker, backend="upstash")
+        mock_db_conn("src.routes.rag.get_db_conn")
+        up = mocker.patch("src.routes.rag.vector.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={
+            "pergunta": "DAS?", "metadata_filter": {"perfil": ["profissional_liberal"]}
+        })
+
+        assert up.call_args.args[-1] == "pl"
+
+    def test_perfil_no_topo_continua_valendo(self, client, mock_db_conn, mocker):
+        # contrato antigo não pode quebrar: o harness e os testes usam essa forma
+        self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        pg = mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={"pergunta": "DAS?", "perfil": "autonomo"})
+
+        assert pg.call_args.args[-1] == "autonomo"
+
+    def test_perfil_no_topo_tem_precedencia(self, client, mock_db_conn, mocker):
+        self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        pg = mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={
+            "pergunta": "DAS?", "perfil": "mei", "metadata_filter": {"perfil": ["pl"]}
+        })
+
+        assert pg.call_args.args[-1] == "mei"
+
+    def test_metadata_filter_invalido_nao_quebra(self, client, mock_db_conn, mocker):
+        # lista vazia, string solta, perfil desconhecido: cai em None (sem filtro),
+        # nunca 500 — o RAG é caminho de resposta ao usuário
+        self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        pg = mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+
+        for mf in [{"perfil": []}, {"perfil": "mei"}, {"perfil": ["xpto"]}, {}, "nao-e-dict"]:
+            resp = client.post("/rag/busca", json={"pergunta": "DAS?", "metadata_filter": mf})
+            assert resp.status_code == 200
+
+        assert pg.call_args_list[0].args[-1] is None
+        assert pg.call_args_list[1].args[-1] == "mei"   # string solta também serve
+        assert pg.call_args_list[2].args[-1] is None

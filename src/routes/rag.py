@@ -15,6 +15,27 @@ _openai_client: OpenAI | None = None
 _PERFIL_MAP = {"profissional_liberal": "pl", "pl": "pl", "mei": "mei", "autonomo": "autonomo"}
 
 
+def _perfil_do_filtro(body: dict) -> str | None:
+    """Perfil vindo de `metadata_filter: {perfil: [...]}`, que é o que o n8n manda.
+
+    Os nós vivos (Pivo MEI `qIJeMzdPy5dxITPq`, Pivo PL `6WqW7NG8pceqzRi0`) sempre
+    montaram o body nessa forma, mas a rota só lia `body["perfil"]` — e
+    `metadata_filter` nunca existiu no histórico dela. Resultado em produção:
+    perfil sempre None, cláusula de filtro nunca aplicada (PL recebendo chunk de
+    DAS) e, com RAG_BACKEND=upstash, todo request degradando para o pgvector.
+
+    Tolerante de propósito: lista, string solta ou lixo caem em None (sem filtro),
+    nunca em 500 — isto está no caminho de resposta ao usuário.
+    """
+    mf = body.get("metadata_filter")
+    if not isinstance(mf, dict):
+        return None
+    valor = mf.get("perfil")
+    if isinstance(valor, (list, tuple)):
+        valor = valor[0] if valor else None
+    return _PERFIL_MAP.get(str(valor or "").lower().strip())
+
+
 def _get_client() -> OpenAI:
     global _openai_client
     if _openai_client is None:
@@ -33,7 +54,7 @@ def busca_rag():
     match_count = int(body.get("match_count", Config.RAG_MATCH_COUNT))
     match_threshold = float(body.get("match_threshold", Config.RAG_MATCH_THRESHOLD))
     # perfil opcional: filtra chunks por metadata.perfil (mei|autonomo|pl); inválido/ausente = sem filtro
-    perfil = _PERFIL_MAP.get(str(body.get("perfil") or "").lower().strip())
+    perfil = _PERFIL_MAP.get(str(body.get("perfil") or "").lower().strip()) or _perfil_do_filtro(body)
 
     # Cache por hash da query normalizada + params (inclui perfil: filtro muda o
     # resultado; e o backend: o L2 dura REDIS_TTL_RAG=3600s e não sabe quem gerou
