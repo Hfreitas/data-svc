@@ -190,3 +190,43 @@ class TestBackendUpstash:
         client.post("/rag/busca", json={"pergunta": "DAS?", "perfil": "mei"})
 
         assert get.call_args_list[0].args[0] != get.call_args_list[1].args[0]
+
+    def test_upstash_servindo_loga_o_caminho_de_sucesso(self, client, mock_db_conn, mocker, capsys):
+        # sem log no sucesso, o F6 fica inverificável: log limpo depois do flip é
+        # ambíguo entre "Upstash servindo" e "RAG_BACKEND nem foi lido". O único
+        # sinal hoje é o do fallback, e ausência de erro não prova qual ramo rodou.
+        self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        mocker.patch("src.routes.rag.vector.busca_semantica", return_value=[
+            {"id": 1, "content": "x", "similarity": 0.5},
+            {"id": 2, "content": "y", "similarity": 0.4},
+        ])
+
+        client.post("/rag/busca", json={"pergunta": "DAS?", "perfil": "mei"})
+
+        out = capsys.readouterr().out
+        assert "[rag] upstash ok" in out
+        assert "perfil=mei" in out
+        assert "resultados=2" in out
+
+    def test_upstash_com_zero_resultados_tambem_loga(self, client, mock_db_conn, mocker, capsys):
+        # o caso mais ambíguo de todos: 200 vazio legítimo é indistinguível de
+        # backend nunca acionado. `resultados=0` no log separa os dois.
+        self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        mocker.patch("src.routes.rag.vector.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={"pergunta": "DAS?", "perfil": "mei"})
+
+        assert "resultados=0" in capsys.readouterr().out
+
+    def test_pgvector_nao_loga_por_requisicao(self, client, mock_db_conn, mocker, capsys):
+        # o caminho default serve 100% do tráfego hoje; logar cada request só
+        # encheria o stdout do Easypanel. O log existe para observar o cutover.
+        self._preparar(mocker, backend="pgvector")
+        mock_db_conn("src.routes.rag.get_db_conn")
+        mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={"pergunta": "DAS?", "perfil": "mei"})
+
+        assert "[rag]" not in capsys.readouterr().out

@@ -59,6 +59,12 @@ def busca_rag():
     if backend == "upstash":
         try:
             resultados = vector.busca_semantica(embedding, match_threshold, match_count, perfil)
+            # Log do caminho de SUCESSO, não só da falha. Sem ele o cutover é
+            # inverificável: stdout limpo depois de virar a flag é ambíguo entre
+            # "índice servindo" e "RAG_BACKEND nem foi lido". `resultados=0` é o
+            # caso que mais precisa aparecer — 200 vazio legítimo e backend nunca
+            # acionado produzem a mesma resposta HTTP.
+            print(f"[rag] upstash ok: perfil={perfil} resultados={len(resultados)}")
         except vector.VectorIndisponivel as e:
             # degrada para o pgvector em vez de 500 ou lista vazia. O log é
             # obrigatório: fallback mudo faz a Upstash parecer saudável enquanto
