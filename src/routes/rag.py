@@ -3,7 +3,7 @@ import hashlib
 from flask import Blueprint, request
 from openai import OpenAI
 from src.db import get_db_conn
-from src import redis_cache
+from src import redis_cache, vector
 from src.config import Config
 from src.utils.api_response import ok, fail
 import src.queries.rag as queries
@@ -35,9 +35,13 @@ def busca_rag():
     # perfil opcional: filtra chunks por metadata.perfil (mei|autonomo|pl); inválido/ausente = sem filtro
     perfil = _PERFIL_MAP.get(str(body.get("perfil") or "").lower().strip())
 
-    # Cache por hash da query normalizada + params (inclui perfil: filtro muda o resultado)
+    # Cache por hash da query normalizada + params (inclui perfil: filtro muda o
+    # resultado; e o backend: o L2 dura REDIS_TTL_RAG=3600s e não sabe quem gerou
+    # a linha, então sem isso virar RAG_BACKEND serviria o resultado do backend
+    # anterior por uma hora — o A/B em produção estaria medindo o cache).
+    backend = Config.RAG_BACKEND
     cache_key = "rag:" + hashlib.sha256(
-        f"{pergunta.strip().lower()}|{match_count}|{match_threshold}|{perfil or ''}".encode("utf-8")
+        f"{pergunta.strip().lower()}|{match_count}|{match_threshold}|{perfil or ''}|{backend}".encode("utf-8")
     ).hexdigest()
     cached = redis_cache.cache_get(cache_key)
     if cached is not None:
@@ -51,8 +55,21 @@ def busca_rag():
     except Exception as e:
         return fail("embedding_error", str(e), 500)
 
-    with get_db_conn() as conn:
-        resultados = queries.busca_semantica(conn, embedding, match_threshold, match_count, perfil)
+    resultados = None
+    if backend == "upstash":
+        try:
+            resultados = vector.busca_semantica(embedding, match_threshold, match_count, perfil)
+        except vector.VectorIndisponivel as e:
+            # degrada para o pgvector em vez de 500 ou lista vazia. O log é
+            # obrigatório: fallback mudo faz a Upstash parecer saudável enquanto
+            # o Postgres serve 100% do tráfego.
+            print(f"[rag] upstash indisponivel, caindo no pgvector: {e}")
+
+    if resultados is None:
+        with get_db_conn() as conn:
+            resultados = queries.busca_semantica(
+                conn, embedding, match_threshold, match_count, perfil
+            )
 
     redis_cache.cache_set(cache_key, resultados, Config.REDIS_TTL_RAG)
     return ok(200, {"resultados": resultados})

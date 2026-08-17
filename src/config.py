@@ -40,6 +40,13 @@ class Config:
     RAG_MATCH_THRESHOLD: float = float(os.environ.get("RAG_MATCH_THRESHOLD", "0.7"))
     RAG_MATCH_COUNT: int = int(os.environ.get("RAG_MATCH_COUNT", "5"))
 
+    # Backend de busca vetorial. `pgvector` (default) = tabela documents no
+    # Supabase; `upstash` = índice Upstash Vector, namespace por perfil. A/B de
+    # 2026-08-17 deu recall idêntico (0,92) nos dois — ver src/vector.py.
+    RAG_BACKEND: str = (os.environ.get("RAG_BACKEND") or "pgvector").strip().lower()
+    UPSTASH_VECTOR_REST_URL: str = (os.getenv("UPSTASH_VECTOR_REST_URL") or "").strip()
+    UPSTASH_VECTOR_REST_TOKEN: str = (os.getenv("UPSTASH_VECTOR_REST_TOKEN") or "").strip()
+
     @classmethod
     def validate(cls) -> None:
         if cls.FLASK_ENV == "production" and cls.API_KEY is None:
