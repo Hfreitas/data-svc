@@ -310,3 +310,76 @@ class TestPerfilViaMetadataFilter:
         assert pg.call_args_list[0].args[-1] is None
         assert pg.call_args_list[1].args[-1] == "mei"   # string solta também serve
         assert pg.call_args_list[2].args[-1] is None
+
+
+class TestNormalizacaoDaPergunta:
+    """A pergunta é normalizada ANTES do embedding.
+
+    Medido em PRD 2026-08-17: `carnê-leão` achava 5 chunks (melhor 0,6017) e
+    `carne-leao` achava zero — usuário de WhatsApp digita sem acento. Só vale
+    junto com o reindex do acervo pela mesma função; normalizar um lado só
+    inverte o problema em vez de resolver.
+    """
+
+    def _preparar(self, mocker, embedding=None):
+        mocker.patch("src.routes.rag.redis_cache.cache_get", return_value=None)
+        mocker.patch("src.routes.rag.redis_cache.cache_set")
+        emb_resp = mocker.MagicMock()
+        emb_resp.data = [mocker.MagicMock(embedding=embedding or [0.1, 0.2])]
+        fake = mocker.MagicMock()
+        fake.embeddings.create.return_value = emb_resp
+        mocker.patch("src.routes.rag._get_client", return_value=fake)
+        return fake
+
+    def test_embedding_recebe_a_pergunta_sem_acento(self, client, mock_db_conn, mocker):
+        fake = self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={"pergunta": "Como funciona o carnê-leão?"})
+
+        assert fake.embeddings.create.call_args.kwargs["input"] == "como funciona o carne-leao?"
+
+    def test_as_duas_grafias_geram_o_mesmo_embedding_input(self, client, mock_db_conn, mocker):
+        fake = self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={"pergunta": "carnê-leão"})
+        client.post("/rag/busca", json={"pergunta": "CARNE-LEAO"})
+
+        entradas = [c.kwargs["input"] for c in fake.embeddings.create.call_args_list]
+        assert entradas[0] == entradas[1]
+
+    def test_as_duas_grafias_compartilham_cache_key(self, client, mock_db_conn, mocker):
+        self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        get = mocker.patch("src.routes.rag.redis_cache.cache_get", return_value=None)
+        mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={"pergunta": "carnê-leão"})
+        client.post("/rag/busca", json={"pergunta": "carne-leao"})
+
+        chaves = [c.args[0] for c in get.call_args_list]
+        assert chaves[0] == chaves[1]
+
+    def test_pergunta_original_nao_e_exigida_no_corpo_da_resposta(self, client, mock_db_conn, mocker):
+        # normalização é interna à busca; não altera contrato nem os chunks devolvidos
+        self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        chunks = [{"id": 1, "content": "Carnê-Leão é apuração mensal", "similarity": 0.6}]
+        mocker.patch("src.routes.rag.queries.busca_semantica", return_value=chunks)
+
+        resp = client.post("/rag/busca", json={"pergunta": "carne-leao"})
+
+        # o content devolvido segue ACENTUADO — só o vetor usa a forma normalizada
+        assert resp.get_json()["resultados"] == chunks
+
+    def test_pergunta_so_de_espaco_nao_quebra(self, client, mock_db_conn, mocker):
+        self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+
+        resp = client.post("/rag/busca", json={"pergunta": "   "})
+
+        assert resp.status_code == 200

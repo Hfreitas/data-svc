@@ -6,6 +6,7 @@ from src.db import get_db_conn
 from src import redis_cache, vector
 from src.config import Config
 from src.utils.api_response import ok, fail
+from src.utils.texto import normalizar_busca
 import src.queries.rag as queries
 
 rag_bp = Blueprint("rag", __name__)
@@ -50,7 +51,11 @@ def busca_rag():
     if not body or "pergunta" not in body:
         return fail("missing_field", "Campo obrigatório: pergunta", 400)
 
-    pergunta = body["pergunta"]
+    # Forma canônica ANTES do embedding: usuário de WhatsApp digita sem acento, e
+    # o text-embedding-3-small trata `carne-leao` e `carnê-leão` como palavras
+    # diferentes (medido em PRD: 5 chunks a 0,6017 contra ZERO). Só funciona
+    # porque o acervo é indexado pela MESMA função — ver src/utils/texto.py.
+    pergunta = normalizar_busca(body["pergunta"])
     match_count = int(body.get("match_count", Config.RAG_MATCH_COUNT))
     match_threshold = float(body.get("match_threshold", Config.RAG_MATCH_THRESHOLD))
     # perfil opcional: filtra chunks por metadata.perfil (mei|autonomo|pl); inválido/ausente = sem filtro
