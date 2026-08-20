@@ -305,3 +305,24 @@ def save_cliente_nf(conn, usuario_id: int, nome: str, cnpj: str, email: str) -> 
 
     return {"id": enterprise_id, "nome": nome, "cnpj": cnpj, "email": email}
 
+
+
+def find_telefones_by_ids(conn, usuario_ids: list) -> dict:
+    """Resolve {id: numero_telefone} para os ids informados, numa query só.
+
+    Existe para a invalidação de cache: a chave do L2 é `user:<telefone>`, mas
+    escrita externa (SQL manual, job) identifica o usuário por id. Ids ausentes
+    simplesmente não aparecem no dict — o caller reporta como não-encontrados.
+    """
+    if not usuario_ids:
+        return {}
+
+    sql = """
+        SELECT id, numero_telefone
+        FROM public.usuarios
+        WHERE id = ANY(%(ids)s);
+    """
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"ids": list(usuario_ids)})
+        return {row["id"]: row["numero_telefone"] for row in cursor.fetchall()}

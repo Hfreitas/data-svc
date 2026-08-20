@@ -12,6 +12,7 @@ from src.routes.contas import contas_bp
 from src.routes.agente import agente_bp
 from src.routes.memoria import memoria_bp
 from src.routes.rag import rag_bp
+from src.routes.cache import cache_bp
 from src.routes.feedbacks import feedbacks_bp
 from src.routes.business import business_bp
 from src.routes.oauth import oauth_bp
@@ -42,6 +43,7 @@ def create_app() -> Flask:
     app.register_blueprint(agente_bp)
     app.register_blueprint(memoria_bp)
     app.register_blueprint(rag_bp)
+    app.register_blueprint(cache_bp)
     app.register_blueprint(feedbacks_bp)
     app.register_blueprint(business_bp)
     app.register_blueprint(oauth_bp)
