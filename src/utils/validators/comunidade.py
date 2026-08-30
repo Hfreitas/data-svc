@@ -6,9 +6,13 @@ from .validators import parse_boolish, require_fields
 
 
 _CATEGORIAS_SERVICO: Final[set[str]] = {
+    # MEI / serviços
     "motoboy", "bolos", "doces", "costura", "limpeza", "manicure",
     "cabeleireiro", "fotografia", "design_grafico", "aulas_particulares",
     "frete_mudanca", "jardinagem", "eletricista", "encanador", "pintor", "outros",
+    # Profissionais liberais (mesma rede)
+    "nutricionista", "psicologo", "fisioterapeuta", "dentista",
+    "advogado", "contador", "personal_trainer",
 }
 
 

@@ -5,7 +5,7 @@ load_dotenv()
 
 
 class Config:
-    DATABASE_URL: str = os.environ["DATABASE_URL"]
+    DATABASE_URL: str = os.environ.get("DATA_SVC_DATABASE_URL") or os.environ["DATABASE_URL"]
     PORT: int = int(os.getenv("PORT", 5000))
     FLASK_ENV: str = os.getenv("FLASK_ENV", "production")
 
