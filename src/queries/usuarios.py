@@ -9,7 +9,7 @@ def find_by_telefone(conn, telefone: str) -> dict | None:
     sql = """
         SELECT
             id, numero_telefone, nome, razao_social, email,
-            estado_atual, interacao_previa,
+            estado_atual, estado_atualizado_em, interacao_previa,
             tipo_negocio, descricao_negocio, descricao_objetivo,
             area_ajuda, preco_referencia,
             dias_trabalho, horario_inicio, horario_fim,
@@ -103,6 +103,7 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
             municipio               = COALESCE(%(municipio)s, municipio),
             followup_agendado       = COALESCE(%(followup_agendado)s, followup_agendado),
             followup_timestamp      = COALESCE(%(followup_timestamp)s, followup_timestamp),
+            estado_atualizado_em    = CASE WHEN %(estado_atual)s IS NOT NULL THEN NOW() ELSE estado_atualizado_em END,
             data_ultimo_contato     = NOW()
         WHERE id = %(id)s
         RETURNING *;
@@ -326,3 +327,18 @@ def find_telefones_by_ids(conn, usuario_ids: list) -> dict:
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
         cursor.execute(sql, {"ids": list(usuario_ids)})
         return {row["id"]: row["numero_telefone"] for row in cursor.fetchall()}
+
+
+def get_cobranca_pendente(conn, usuario_id: int) -> dict | None:
+    """Retorna a última cobrança pendente do usuário, ou None se não houver."""
+    sql = """
+        SELECT id, abacatepay_id, pix_code, value AS valor, status, date_created AS created_at
+        FROM public.cobrancas
+        WHERE user_id = %(usuario_id)s AND status = 'AWAITING_PAYMENT'
+        ORDER BY id DESC LIMIT 1;
+    """
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"usuario_id": usuario_id})
+        row = cursor.fetchone()
+        return dict(row) if row else None
