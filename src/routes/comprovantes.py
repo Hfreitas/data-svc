@@ -108,9 +108,10 @@ def patch_comprovante_ultimo(usuario_id: int):
 
     valor_total = body.get("valor_total")
     item = body.get("item")
+    comprovante_id = body.get("comprovante_id")
 
     with get_db_conn() as conn:
-        comprovante = q.update_ultimo(conn, usuario_id, valor_total, item)
+        comprovante = q.update_ultimo(conn, usuario_id, valor_total, item, comprovante_id)
 
         if not comprovante:
             return fail("nao_encontrado", "Nenhum comprovante encontrado para este usuário", 404)
@@ -124,8 +125,11 @@ def patch_comprovante_ultimo(usuario_id: int):
 
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/ultimo", methods=["DELETE"])
 def delete_comprovante_ultimo(usuario_id: int):
+    body = request.get_json(silent=True)
+    comprovante_id = body.get("comprovante_id") if isinstance(body, dict) else None
+
     with get_db_conn() as conn:
-        result = q.delete_ultimo(conn, usuario_id)
+        result = q.delete_ultimo(conn, usuario_id, comprovante_id)
 
         if not result:
             return fail("nao_encontrado", "Nenhum comprovante encontrado para este usuário", 404)

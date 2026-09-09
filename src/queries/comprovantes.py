@@ -136,21 +136,29 @@ def upsert(conn, usuario_id: int, data: dict) -> dict:
         return dict(row)
 
 
-def update_ultimo(conn, usuario_id: int, valor_total=None, item=None) -> dict | None:
-    """Atualiza o último comprovante de um usuário (por last_update DESC)."""
+def update_ultimo(conn, usuario_id: int, valor_total=None, item=None, comprovante_id=None) -> dict | None:
+    """Atualiza o comprovante indicado por comprovante_id; sem id, cai no último (por last_update DESC)."""
     params = {
         "usuario_id": usuario_id,
         "valor_total": valor_total,
         "item": item,
+        "comprovante_id": comprovante_id,
     }
 
     sql = """
         UPDATE public.comprovantes SET
             valor_total = COALESCE(%(valor_total)s, valor_total),
-            valor_unitario = COALESCE(%(valor_total)s, valor_unitario),
+            valor_unitario = CASE
+                WHEN %(valor_total)s IS NULL THEN valor_unitario
+                WHEN COALESCE(quantidade, 1) = 1 THEN %(valor_total)s
+                ELSE valor_unitario
+            END,
             item = COALESCE(%(item)s, item),
             last_update = NOW()
-        WHERE id = (SELECT id FROM public.comprovantes WHERE usuario_id=%(usuario_id)s ORDER BY last_update DESC LIMIT 1)
+        WHERE id = COALESCE(
+            %(comprovante_id)s,
+            (SELECT id FROM public.comprovantes WHERE usuario_id=%(usuario_id)s ORDER BY last_update DESC LIMIT 1)
+        ) AND usuario_id = %(usuario_id)s
         RETURNING id, operacao, item, valor_total;
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -159,13 +167,16 @@ def update_ultimo(conn, usuario_id: int, valor_total=None, item=None) -> dict | 
         return dict(row) if row else None
 
 
-def delete_ultimo(conn, usuario_id: int) -> dict | None:
-    """Deleta o último comprovante de um usuário (por last_update DESC)."""
-    params = {"usuario_id": usuario_id}
+def delete_ultimo(conn, usuario_id: int, comprovante_id=None) -> dict | None:
+    """Deleta o comprovante indicado por comprovante_id; sem id, cai no último (por last_update DESC)."""
+    params = {"usuario_id": usuario_id, "comprovante_id": comprovante_id}
 
     sql = """
         DELETE FROM public.comprovantes
-        WHERE id = (SELECT id FROM public.comprovantes WHERE usuario_id=%(usuario_id)s ORDER BY last_update DESC LIMIT 1)
+        WHERE id = COALESCE(
+            %(comprovante_id)s,
+            (SELECT id FROM public.comprovantes WHERE usuario_id=%(usuario_id)s ORDER BY last_update DESC LIMIT 1)
+        ) AND usuario_id = %(usuario_id)s
         RETURNING id;
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
