@@ -85,6 +85,18 @@ def create_comprovante(usuario_id: int):
 
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/ultimo", methods=["GET"])
 def get_comprovante_ultimo(usuario_id: int):
+    """Último comprovante, ou lista recente quando ?limit=N (fluxo de edição)."""
+    limit_raw = request.args.get("limit")
+    if limit_raw is not None:
+        try:
+            limit = int(limit_raw)
+        except (TypeError, ValueError):
+            return fail("limit_invalido", "parâmetro 'limit' deve ser inteiro", 400)
+
+        with get_db_conn() as conn:
+            rows = q.list_recentes(conn, usuario_id, limit)
+            return ok(200, {"items": rows, "count": len(rows)})
+
     comprovante = cache_get("comprovantes_ultimo", f"{usuario_id}")
     if comprovante:
         return ok(200, comprovante)
@@ -128,6 +140,50 @@ def delete_comprovante_ultimo(usuario_id: int):
     body = request.get_json(silent=True)
     comprovante_id = body.get("comprovante_id") if isinstance(body, dict) else None
 
+    with get_db_conn() as conn:
+        result = q.delete_ultimo(conn, usuario_id, comprovante_id)
+
+        if not result:
+            return fail("nao_encontrado", "Nenhum comprovante encontrado para este usuário", 404)
+
+        cache_invalidate_prefix("saldo", f"{usuario_id}:")
+        cache_invalidate_prefix("comprovantes", f"{usuario_id}:")
+        cache_invalidate_prefix("comprovantes_ultimo", f"{usuario_id}")
+
+        return ok(200, result)
+
+
+@comprovantes_bp.route(
+    "/usuarios/<int:usuario_id>/comprovantes/<int:comprovante_id>",
+    methods=["PATCH"],
+)
+def patch_comprovante_por_id(usuario_id: int, comprovante_id: int):
+    """PATCH explícito por id (mesmo contrato de campos que /ultimo)."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return fail("body_invalido", "JSON inválido ou ausente", 400)
+
+    valor_total = body.get("valor_total")
+    item = body.get("item")
+
+    with get_db_conn() as conn:
+        comprovante = q.update_ultimo(conn, usuario_id, valor_total, item, comprovante_id)
+
+        if not comprovante:
+            return fail("nao_encontrado", "Nenhum comprovante encontrado para este usuário", 404)
+
+        cache_invalidate_prefix("saldo", f"{usuario_id}:")
+        cache_invalidate_prefix("comprovantes", f"{usuario_id}:")
+        cache_invalidate_prefix("comprovantes_ultimo", f"{usuario_id}")
+
+        return ok(200, comprovante)
+
+
+@comprovantes_bp.route(
+    "/usuarios/<int:usuario_id>/comprovantes/<int:comprovante_id>",
+    methods=["DELETE"],
+)
+def delete_comprovante_por_id(usuario_id: int, comprovante_id: int):
     with get_db_conn() as conn:
         result = q.delete_ultimo(conn, usuario_id, comprovante_id)
 

@@ -203,6 +203,25 @@ def get_ultimo(conn, usuario_id: int) -> dict | None:
         return dict(row) if row else None
 
 
+def list_recentes(conn, usuario_id: int, limit: int = 10) -> list[dict]:
+    """Últimos N comprovantes do usuário (qualquer mês), mais recentes primeiro."""
+    limit = max(1, min(int(limit or 10), 50))
+    params = {"usuario_id": usuario_id, "limit": limit}
+
+    sql = """
+        SELECT id, operacao, item, quantidade, valor_unitario, valor_total,
+               to_char(COALESCE(data_venda, data_compra),'DD/MM/YY') AS data_fmt,
+               pagador_nome, atendido_nome, natureza_pagamento
+        FROM public.comprovantes
+        WHERE usuario_id=%(usuario_id)s
+        ORDER BY last_update DESC
+        LIMIT %(limit)s;
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+
 def get_livro_caixa(conn, usuario_id: int, mes: str) -> dict:
     """Agrega dados do livro de caixa para um mês específico."""
     params = {
