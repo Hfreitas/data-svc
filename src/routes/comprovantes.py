@@ -1,3 +1,5 @@
+from datetime import date
+
 from flask import Blueprint, request
 
 from src.db import get_db_conn
@@ -5,6 +7,7 @@ from src.cache import cache_get, cache_invalidate_prefix, cache_set
 from src.config import Config
 from src.utils.validators import validate_comprovante_payload, validate_mes, validate_modo, validate_intervalo
 import src.queries.comprovantes as q
+from src.pdf.livro_caixa import build_livro_caixa_pdf, pdf_to_base64_payload
 from src.utils.api_response import fail, ok
 
 comprovantes_bp = Blueprint("comprovantes", __name__)
@@ -155,4 +158,21 @@ def get_livro_caixa(usuario_id: int):
         cache_set("livro-caixa", f"{usuario_id}:{mes}", livro_caixa, Config.CACHE_TTL_COMPROVANTES)
 
         return ok(200, livro_caixa)
+
+
+@comprovantes_bp.route("/usuarios/<int:usuario_id>/livro-caixa/pdf", methods=["GET"])
+def get_livro_caixa_pdf(usuario_id: int):
+    """Gera PDF do Livro Caixa (layout design PL) e devolve base64 p/ Z-API."""
+    mes_raw = request.args.get("mes") or date.today().strftime("%Y-%m")
+    mes = validate_mes(mes_raw)
+    parcial = str(request.args.get("parcial", "true")).lower() not in ("0", "false", "no")
+
+    with get_db_conn() as conn:
+        detalhado = q.get_livro_caixa_detalhado(conn, usuario_id, mes)
+
+    if not detalhado:
+        return fail("nao_encontrado", "Usuário não encontrado", 404)
+
+    pdf_bytes = build_livro_caixa_pdf(detalhado)
+    return ok(200, pdf_to_base64_payload(pdf_bytes, mes, parcial=parcial))
 
