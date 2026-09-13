@@ -227,3 +227,76 @@ def get_livro_caixa(conn, usuario_id: int, mes: str) -> dict:
         row = cursor.fetchone()
         return dict(row)
 
+def get_livro_caixa_detalhado(conn, usuario_id: int, mes: str) -> dict | None:
+    """Perfil + totais + linhas de pagamentos/rendimentos para o PDF do Livro Caixa."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(
+            """
+            SELECT id, nome, descricao_negocio, perfil_tipo
+            FROM public.usuarios
+            WHERE id = %(usuario_id)s
+            LIMIT 1;
+            """,
+            {"usuario_id": usuario_id},
+        )
+        usuario = cursor.fetchone()
+        if not usuario:
+            return None
+
+        totais = get_livro_caixa(conn, usuario_id, mes)
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                item,
+                natureza_pagamento,
+                valor_total AS valor,
+                COALESCE(data_compra, data_venda) AS data,
+                pagador_nome,
+                pagador_cpf,
+                atendido_nome,
+                atendido_cpf
+            FROM public.comprovantes
+            WHERE usuario_id = %(usuario_id)s
+              AND operacao = 'gasto'
+              AND to_char(COALESCE(data_compra, data_venda), 'YYYY-MM') = %(mes)s
+            ORDER BY COALESCE(data_compra, data_venda) ASC NULLS LAST, id ASC;
+            """,
+            {"usuario_id": usuario_id, "mes": mes},
+        )
+        pagamentos = [dict(r) for r in cursor.fetchall()]
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                item,
+                natureza_pagamento,
+                valor_total AS valor,
+                COALESCE(data_venda, data_compra) AS data,
+                pagador_nome,
+                pagador_cpf,
+                atendido_nome,
+                atendido_cpf
+            FROM public.comprovantes
+            WHERE usuario_id = %(usuario_id)s
+              AND operacao = 'venda'
+              AND to_char(COALESCE(data_venda, data_compra), 'YYYY-MM') = %(mes)s
+            ORDER BY COALESCE(data_venda, data_compra) ASC NULLS LAST, id ASC;
+            """,
+            {"usuario_id": usuario_id, "mes": mes},
+        )
+        rendimentos = [dict(r) for r in cursor.fetchall()]
+
+    return {
+        "usuario_id": usuario_id,
+        "mes": mes,
+        "nome": usuario.get("nome"),
+        "descricao_negocio": usuario.get("descricao_negocio"),
+        "perfil_tipo": usuario.get("perfil_tipo"),
+        "totais": totais,
+        "pagamentos": pagamentos,
+        "rendimentos": rendimentos,
+    }
+
