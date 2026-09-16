@@ -11,6 +11,10 @@ Depois: N8N ──→ data-svc (Flask) ──→ Supabase
 
 **Stack:** Python 3.12 · Flask · psycopg2 · cachetools · Gunicorn · OpenAI SDK
 
+> Para o inventário completo de endpoints (método, path, propósito, body/params), a lista
+> integral de variáveis de ambiente e o funcionamento interno do cache em dois níveis e do RAG
+> dual-backend, ver [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
+
 ---
 
 ## Contribuição
