@@ -8,7 +8,7 @@ os endpoints Flask, e os módulos centrais (cache em dois níveis, RAG dual-back
 
 ## 1. O que é e qual o papel no sistema
 
-O `data-svc` é o microserviço Flask (Python 3.12) que centraliza **todo** o acesso ao Postgres
+O `data-svc` é o microserviço Flask (Python 3.12) que centraliza todo o acesso ao Postgres
 (Supabase) da MEIrelles. Os workflows n8n (Orbit, Financeiro MEI/PL, Livro Caixa, Comunidade,
 Agenda etc.) não têm mais nós Postgres diretos — eles chamam o `data-svc` via HTTP, autenticado
 por API key, e o serviço faz a query, aplica cache e devolve JSON já pronto para o agente de IA
@@ -66,7 +66,7 @@ Resumo — para o passo a passo completo (virtualenv, `docker-compose.yml`, seed
 | `API_KEY` | em produção | — | valor exigido no header `X-Api-Key`; vazio = auth desativada (dev) |
 | `OPENAI_API_KEY` | para LLM opcional | — | fallback de `EMBEDDINGS_API_KEY` se esta faltar |
 | `OPENAI_BASE_URL` | não | — | override de base URL para chamadas de LLM (não afeta embeddings) |
-| `EMBEDDINGS_API_KEY` | para `/rag/busca` | herda `OPENAI_API_KEY` | **sempre** OpenAI real — 1536 dims fixos no schema; Gemini não serve para embeddings |
+| `EMBEDDINGS_API_KEY` | para `/rag/busca` | herda `OPENAI_API_KEY` | sempre OpenAI real — 1536 dims fixos no schema; Gemini não serve para embeddings |
 | `EMBEDDING_MODEL` | não | `text-embedding-3-small` | modelo de embedding |
 | `RAG_MATCH_THRESHOLD` | não | `0.4` | corte de similaridade cosseno em `/rag/busca` (0.7 zera resultado com este modelo — não usar) |
 | `RAG_MATCH_COUNT` | não | `5` | quantidade de chunks retornados |
@@ -128,7 +128,7 @@ Todas as rotas exigem o header `X-Api-Key` quando `API_KEY` está configurada (v
 | POST | `/usuarios/<id>/agendamentos` | Cria agendamento | body validado por `validate_agendamento_payload` |
 | POST | `/usuarios/<id>/agendamentos/recorrentes` | Cria série recorrente (gera datas em `recurrence_generator`) | body `{data_inicio, frequencia, dia_semana_ou_mes, quantidade_meses, nome_compromisso, hora_compromisso}` |
 | PUT | `/usuarios/<id>/agendamentos/<agendamento_id>` | Atualiza agendamento | body validado por `validate_update_agendamento_payload` |
-| DELETE | `/usuarios/<id>/agendamentos` | Cancela **todos** os agendamentos do usuário | — |
+| DELETE | `/usuarios/<id>/agendamentos` | Cancela todos os agendamentos do usuário | — |
 | DELETE | `/usuarios/<id>/agendamentos/recorrencia/<recorrencia_id>` | Cancela uma série recorrente | — |
 
 ### `listas` — `src/routes/listas.py`
@@ -275,11 +275,11 @@ conhecimento com um backend duplo, escolhido por `RAG_BACKEND`:
    - `pgvector` (default) — `src/queries/rag.py::busca_semantica`, consulta a tabela
      `documents` no Supabase.
    - `upstash` — `src/vector.py::busca_semantica`, consulta o índice Upstash Vector
-     (namespace por perfil: `mei`/`pl`/`autonomo`; perfil é **obrigatório** neste caminho,
+     (namespace por perfil: `mei`/`pl`/`autonomo`; perfil é obrigatório neste caminho,
      diferente do pgvector, porque não existe namespace "tudo"). Duas correções aplicadas
      sobre o resultado cru da Upstash: reescala o score `(1+cos)/2 → cos` (senão o filtro de
      threshold aceitaria quase tudo) e faz over-fetch (`topK = count × 20`) porque a busca é
-     aproximada (HNSW) e `topK` baixo perde o vizinho verdadeiro. Falha aqui **levanta**
+     aproximada (HNSW) e `topK` baixo perde o vizinho verdadeiro. Falha aqui levanta
      (`VectorIndisponivel`) em vez de devolver lista vazia — a rota decide degradar para
      pgvector, e sempre loga (`[rag] upstash ok: ...` ou `[rag] upstash indisponivel, caindo no
      pgvector: ...`), porque um 200 vazio silencioso pareceria "índice saudável, sem

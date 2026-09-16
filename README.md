@@ -147,7 +147,7 @@ FLASK_ENV=development
 TZ=America/Sao_Paulo
 ```
 
-> Para apontar para o Supabase de staging/produção, substitua `DATABASE_URL` pela connection string do painel do Supabase. **Nunca use produção para desenvolvimento.**
+> Para apontar para o Supabase de staging/produção, substitua `DATABASE_URL` pela connection string do painel do Supabase. Nunca use produção para desenvolvimento.
 
 ### 3. Crie o docker-compose.yml para o banco local
 
@@ -331,7 +331,7 @@ docker run --rm \
 
 ## Segurança — Acesso restrito ao N8N
 
-O `data-svc` **não deve ser acessível pela internet**. A proteção é feita em duas camadas:
+O `data-svc` não deve ser acessível pela internet. A proteção é feita em duas camadas:
 
 ### Camada 1 — Isolamento de rede (Easypanel)
 
