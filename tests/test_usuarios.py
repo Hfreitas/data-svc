@@ -495,3 +495,46 @@ class TestResetDemoQuery:
 
         assert result is None
         cursor.execute.assert_called_once()
+
+
+class TestCobrancaPendente:
+    def test_retorna_cobranca_pendente(self, client, mock_db_conn, mocker):
+        usuario_id = 5
+        cobranca_fake = {
+            "id": 42,
+            "abacatepay_id": "abc123",
+            "pix_code": "00020126580014br.gov.bcb.pix...",
+            "valor": 150.50,
+            "status": "AWAITING_PAYMENT",
+            "created_at": "2026-08-27T10:30:00+00:00",
+        }
+        _, conn = mock_db_conn("src.routes.usuarios.get_db_conn")
+
+        get_mock = mocker.patch(
+            "src.routes.usuarios.q.get_cobranca_pendente", return_value=cobranca_fake
+        )
+
+        resp = client.get(f"/usuarios/{usuario_id}/cobranca-pendente")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == cobranca_fake
+        get_mock.assert_called_once_with(conn, usuario_id)
+
+    def test_retorna_objeto_vazio_quando_nao_existe(self, client, mock_db_conn, mocker):
+        usuario_id = 5
+        _, conn = mock_db_conn("src.routes.usuarios.get_db_conn")
+
+        get_mock = mocker.patch(
+            "src.routes.usuarios.q.get_cobranca_pendente", return_value=None
+        )
+
+        resp = client.get(f"/usuarios/{usuario_id}/cobranca-pendente")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == {}
+        get_mock.assert_called_once_with(conn, usuario_id)
+
+    def test_usuario_id_invalido_retorna_404(self, client):
+        resp = client.get("/usuarios/abc/cobranca-pendente")
+
+        assert resp.status_code == 404

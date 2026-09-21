@@ -183,3 +183,12 @@ def create_cliente_nf(usuario_id: int):
         )
     return ok(200, cliente)
 
+
+@usuarios_bp.route("/usuarios/<int:usuario_id>/cobranca-pendente", methods=["GET"])
+def get_cobranca_pendente(usuario_id: int):
+    with get_db_conn() as conn:
+        cobranca = q.get_cobranca_pendente(conn, usuario_id)
+
+    # Retorna {} quando não existe (não 404)
+    return ok(200, cobranca if cobranca else {})
+
