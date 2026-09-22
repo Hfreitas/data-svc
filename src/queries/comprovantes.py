@@ -185,22 +185,33 @@ def delete_ultimo(conn, usuario_id: int, comprovante_id=None) -> dict | None:
         return dict(row) if row else None
 
 
+_SQL_ULTIMOS = """
+    SELECT id, operacao, item, quantidade, valor_unitario, valor_total,
+           to_char(COALESCE(data_venda, data_compra),'DD/MM/YY') AS data_fmt,
+           pagador_nome, atendido_nome, natureza_pagamento
+    FROM public.comprovantes
+    WHERE usuario_id=%(usuario_id)s
+    ORDER BY last_update DESC LIMIT %(limit)s;
+"""
+
+
 def get_ultimo(conn, usuario_id: int) -> dict | None:
     """Retorna o último comprovante de um usuário (por last_update DESC)."""
-    params = {"usuario_id": usuario_id}
+    params = {"usuario_id": usuario_id, "limit": 1}
 
-    sql = """
-        SELECT id, operacao, item, quantidade, valor_unitario, valor_total,
-               to_char(COALESCE(data_venda, data_compra),'DD/MM/YY') AS data_fmt,
-               pagador_nome, atendido_nome, natureza_pagamento
-        FROM public.comprovantes
-        WHERE usuario_id=%(usuario_id)s
-        ORDER BY last_update DESC LIMIT 1;
-    """
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-        cursor.execute(sql, params)
+        cursor.execute(_SQL_ULTIMOS, params)
         row = cursor.fetchone()
         return dict(row) if row else None
+
+
+def get_ultimos(conn, usuario_id: int, limit: int) -> list[dict]:
+    """Retorna os N últimos comprovantes do usuário (mesma ordenação e campos de get_ultimo)."""
+    params = {"usuario_id": usuario_id, "limit": limit}
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(_SQL_ULTIMOS, params)
+        return [dict(row) for row in cursor.fetchall()]
 
 
 def get_livro_caixa(conn, usuario_id: int, mes: str) -> dict:

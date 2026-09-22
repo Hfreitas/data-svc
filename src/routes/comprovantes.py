@@ -1,4 +1,4 @@
-from flask import Blueprint, request
+from flask import Blueprint, abort, request
 
 from src.db import get_db_conn
 from src.cache import cache_get, cache_invalidate_prefix, cache_set
@@ -83,8 +83,36 @@ def create_comprovante(usuario_id: int):
         return ok(200, comprovante)
 
 
+def _parse_limit(raw: str | None) -> int | None:
+    """?limit= ausente → None (comportamento antigo). Presente: inteiro 1..50, senão 400."""
+    if raw is None:
+        return None
+    try:
+        limit = int(raw)
+    except (TypeError, ValueError):
+        limit = 0
+    if not 1 <= limit <= 50:
+        abort(400, description="parâmetro 'limit' deve ser um inteiro entre 1 e 50")
+    return limit
+
+
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/ultimo", methods=["GET"])
 def get_comprovante_ultimo(usuario_id: int):
+    limit = _parse_limit(request.args.get("limit"))
+
+    if limit is not None:
+        # Chave com o prefixo `{usuario_id}` pra cair na mesma invalidação das rotas de escrita.
+        cache_key = f"{usuario_id}:limit:{limit}"
+        ultimos = cache_get("comprovantes_ultimo", cache_key)
+        if ultimos:
+            return ok(200, ultimos)
+
+        with get_db_conn() as conn:
+            items = q.get_ultimos(conn, usuario_id, limit)
+            ultimos = {"items": items, "count": len(items)}
+            cache_set("comprovantes_ultimo", cache_key, ultimos, Config.CACHE_TTL_COMPROVANTES)
+            return ok(200, ultimos)
+
     comprovante = cache_get("comprovantes_ultimo", f"{usuario_id}")
     if comprovante:
         return ok(200, comprovante)
@@ -100,15 +128,25 @@ def get_comprovante_ultimo(usuario_id: int):
         return ok(200, comprovante)
 
 
-@comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/ultimo", methods=["PATCH"])
-def patch_comprovante_ultimo(usuario_id: int):
+def _invalidar_cache_comprovantes(usuario_id: int):
+    cache_invalidate_prefix("saldo", f"{usuario_id}:")
+    cache_invalidate_prefix("comprovantes", f"{usuario_id}:")
+    cache_invalidate_prefix("comprovantes_ultimo", f"{usuario_id}")
+
+
+def _patch_comprovante(usuario_id: int, comprovante_id: int | None):
+    """Corpo compartilhado do PATCH /ultimo e PATCH /<comprovante_id>.
+
+    Com `comprovante_id` explícito na URL ele prevalece; no /ultimo vem do body (ou None → último).
+    """
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         return fail("body_invalido", "JSON inválido ou ausente", 400)
 
     valor_total = body.get("valor_total")
     item = body.get("item")
-    comprovante_id = body.get("comprovante_id")
+    if comprovante_id is None:
+        comprovante_id = body.get("comprovante_id")
 
     with get_db_conn() as conn:
         comprovante = q.update_ultimo(conn, usuario_id, valor_total, item, comprovante_id)
@@ -116,17 +154,16 @@ def patch_comprovante_ultimo(usuario_id: int):
         if not comprovante:
             return fail("nao_encontrado", "Nenhum comprovante encontrado para este usuário", 404)
 
-        cache_invalidate_prefix("saldo", f"{usuario_id}:")
-        cache_invalidate_prefix("comprovantes", f"{usuario_id}:")
-        cache_invalidate_prefix("comprovantes_ultimo", f"{usuario_id}")
+        _invalidar_cache_comprovantes(usuario_id)
 
         return ok(200, comprovante)
 
 
-@comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/ultimo", methods=["DELETE"])
-def delete_comprovante_ultimo(usuario_id: int):
-    body = request.get_json(silent=True)
-    comprovante_id = body.get("comprovante_id") if isinstance(body, dict) else None
+def _delete_comprovante(usuario_id: int, comprovante_id: int | None):
+    """Corpo compartilhado do DELETE /ultimo e DELETE /<comprovante_id>."""
+    if comprovante_id is None:
+        body = request.get_json(silent=True)
+        comprovante_id = body.get("comprovante_id") if isinstance(body, dict) else None
 
     with get_db_conn() as conn:
         result = q.delete_ultimo(conn, usuario_id, comprovante_id)
@@ -134,11 +171,31 @@ def delete_comprovante_ultimo(usuario_id: int):
         if not result:
             return fail("nao_encontrado", "Nenhum comprovante encontrado para este usuário", 404)
 
-        cache_invalidate_prefix("saldo", f"{usuario_id}:")
-        cache_invalidate_prefix("comprovantes", f"{usuario_id}:")
-        cache_invalidate_prefix("comprovantes_ultimo", f"{usuario_id}")
+        _invalidar_cache_comprovantes(usuario_id)
 
         return ok(200, result)
+
+
+@comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/ultimo", methods=["PATCH"])
+def patch_comprovante_ultimo(usuario_id: int):
+    return _patch_comprovante(usuario_id, None)
+
+
+@comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/ultimo", methods=["DELETE"])
+def delete_comprovante_ultimo(usuario_id: int):
+    return _delete_comprovante(usuario_id, None)
+
+
+@comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/<int:comprovante_id>", methods=["PATCH"])
+def patch_comprovante_por_id(usuario_id: int, comprovante_id: int):
+    """Edita um comprovante específico; 404 se não pertence ao usuário (filtro `usuario_id` na query)."""
+    return _patch_comprovante(usuario_id, comprovante_id)
+
+
+@comprovantes_bp.route("/usuarios/<int:usuario_id>/comprovantes/<int:comprovante_id>", methods=["DELETE"])
+def delete_comprovante_por_id(usuario_id: int, comprovante_id: int):
+    """Remove um comprovante específico; 404 se não pertence ao usuário."""
+    return _delete_comprovante(usuario_id, comprovante_id)
 
 
 @comprovantes_bp.route("/usuarios/<int:usuario_id>/livro-caixa", methods=["GET"])

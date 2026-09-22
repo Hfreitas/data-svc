@@ -342,3 +342,139 @@ class TestListComprovantesPorIntervalo:
     def test_lista_range_data_invalida_400(self, client):
         resp = client.get("/usuarios/1/comprovantes?modo=relatorio&data_inicio=xx&data_fim=2026-08-14")
         assert resp.status_code == 400
+
+
+class TestUltimoEPatchComprovante:
+    ULTIMO_FAKE = {
+        "id": 42, "operacao": "venda", "item": "Corte", "quantidade": 1,
+        "valor_unitario": 50.0, "valor_total": 50.0, "data_fmt": "20/09/26",
+        "pagador_nome": None, "atendido_nome": None, "natureza_pagamento": None,
+    }
+
+    def test_get_ultimo_sem_limit_mantem_shape_antigo(self, client, mock_db_conn, mocker):
+        _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
+        mocker.patch("src.routes.comprovantes.cache_get", return_value=None)
+        get_ultimo_mock = mocker.patch("src.routes.comprovantes.q.get_ultimo", return_value=self.ULTIMO_FAKE)
+        get_ultimos_mock = mocker.patch("src.routes.comprovantes.q.get_ultimos")
+        cache_set_mock = mocker.patch("src.routes.comprovantes.cache_set")
+
+        resp = client.get("/usuarios/1/comprovantes/ultimo")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == self.ULTIMO_FAKE  # 1 objeto, sem envelope
+        get_ultimo_mock.assert_called_once_with(conn, 1)
+        get_ultimos_mock.assert_not_called()
+        cache_set_mock.assert_called_once_with(
+            "comprovantes_ultimo", "1", self.ULTIMO_FAKE, Config.CACHE_TTL_COMPROVANTES,
+        )
+
+    def test_get_ultimo_com_limit_devolve_items_e_count(self, client, mock_db_conn, mocker):
+        itens = [dict(self.ULTIMO_FAKE, id=i) for i in (42, 41, 40)]
+        _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
+        mocker.patch("src.routes.comprovantes.cache_get", return_value=None)
+        get_ultimo_mock = mocker.patch("src.routes.comprovantes.q.get_ultimo")
+        get_ultimos_mock = mocker.patch("src.routes.comprovantes.q.get_ultimos", return_value=itens)
+        cache_set_mock = mocker.patch("src.routes.comprovantes.cache_set")
+
+        resp = client.get("/usuarios/1/comprovantes/ultimo?limit=3")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == {"items": itens, "count": 3}
+        get_ultimos_mock.assert_called_once_with(conn, 1, 3)
+        get_ultimo_mock.assert_not_called()
+        cache_set_mock.assert_called_once_with(
+            "comprovantes_ultimo", "1:limit:3", {"items": itens, "count": 3}, Config.CACHE_TTL_COMPROVANTES,
+        )
+
+    def test_get_ultimo_limit_invalido_400(self, client, mocker):
+        get_ultimos_mock = mocker.patch("src.routes.comprovantes.q.get_ultimos")
+
+        for raw in ("0", "51", "abc", ""):
+            resp = client.get(f"/usuarios/1/comprovantes/ultimo?limit={raw}")
+            assert resp.status_code == 400, raw
+            data = resp.get_json()
+            assert data["error"] == "bad_request"
+            assert "'limit'" in data["detail"]
+
+        get_ultimos_mock.assert_not_called()
+
+    def test_patch_por_id_ok(self, client, mock_db_conn, mocker):
+        atualizado = {"id": 42, "operacao": "venda", "item": "Corte", "valor_total": 80.0}
+        _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
+        update_mock = mocker.patch("src.routes.comprovantes.q.update_ultimo", return_value=atualizado)
+        invalidate_mock = mocker.patch("src.routes.comprovantes.cache_invalidate_prefix")
+
+        resp = client.patch("/usuarios/1/comprovantes/42", json={"valor_total": 80.0})
+
+        assert resp.status_code == 200
+        assert resp.get_json() == atualizado
+        update_mock.assert_called_once_with(conn, 1, 80.0, None, 42)
+        invalidate_mock.assert_any_call("saldo", "1:")
+        invalidate_mock.assert_any_call("comprovantes", "1:")
+        invalidate_mock.assert_any_call("comprovantes_ultimo", "1")
+
+    def test_patch_por_id_url_prevalece_sobre_body(self, client, mock_db_conn, mocker):
+        _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
+        update_mock = mocker.patch("src.routes.comprovantes.q.update_ultimo", return_value={"id": 42})
+        mocker.patch("src.routes.comprovantes.cache_invalidate_prefix")
+
+        resp = client.patch("/usuarios/1/comprovantes/42", json={"item": "X", "comprovante_id": 99})
+
+        assert resp.status_code == 200
+        update_mock.assert_called_once_with(conn, 1, None, "X", 42)
+
+    def test_patch_por_id_body_invalido_400(self, client, mocker):
+        update_mock = mocker.patch("src.routes.comprovantes.q.update_ultimo")
+
+        resp = client.patch("/usuarios/1/comprovantes/42", data="nao-json", content_type="text/plain")
+
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "body_invalido"
+        update_mock.assert_not_called()
+
+    def test_patch_id_de_outro_usuario_404(self, client, mock_db_conn, mocker):
+        # A query filtra por usuario_id: comprovante de outro usuário volta None → 404.
+        _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
+        update_mock = mocker.patch("src.routes.comprovantes.q.update_ultimo", return_value=None)
+        invalidate_mock = mocker.patch("src.routes.comprovantes.cache_invalidate_prefix")
+
+        resp = client.patch("/usuarios/1/comprovantes/777", json={"valor_total": 10.0})
+
+        assert resp.status_code == 404
+        assert resp.get_json()["error"] == "nao_encontrado"
+        update_mock.assert_called_once_with(conn, 1, 10.0, None, 777)
+        invalidate_mock.assert_not_called()
+
+    def test_delete_por_id_ok(self, client, mock_db_conn, mocker):
+        _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
+        delete_mock = mocker.patch("src.routes.comprovantes.q.delete_ultimo", return_value={"id": 42})
+        invalidate_mock = mocker.patch("src.routes.comprovantes.cache_invalidate_prefix")
+
+        resp = client.delete("/usuarios/1/comprovantes/42")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == {"id": 42}
+        delete_mock.assert_called_once_with(conn, 1, 42)
+        invalidate_mock.assert_any_call("saldo", "1:")
+        invalidate_mock.assert_any_call("comprovantes", "1:")
+        invalidate_mock.assert_any_call("comprovantes_ultimo", "1")
+
+    def test_delete_id_de_outro_usuario_404(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.comprovantes.get_db_conn")
+        mocker.patch("src.routes.comprovantes.q.delete_ultimo", return_value=None)
+        invalidate_mock = mocker.patch("src.routes.comprovantes.cache_invalidate_prefix")
+
+        resp = client.delete("/usuarios/1/comprovantes/777")
+
+        assert resp.status_code == 404
+        invalidate_mock.assert_not_called()
+
+    def test_patch_ultimo_com_comprovante_id_no_body_inalterado(self, client, mock_db_conn, mocker):
+        _, conn = mock_db_conn("src.routes.comprovantes.get_db_conn")
+        update_mock = mocker.patch("src.routes.comprovantes.q.update_ultimo", return_value={"id": 7})
+        mocker.patch("src.routes.comprovantes.cache_invalidate_prefix")
+
+        resp = client.patch("/usuarios/1/comprovantes/ultimo", json={"valor_total": 5.0, "comprovante_id": 7})
+
+        assert resp.status_code == 200
+        update_mock.assert_called_once_with(conn, 1, 5.0, None, 7)

@@ -114,9 +114,11 @@ Todas as rotas exigem o header `X-Api-Key` quando `API_KEY` está configurada (v
 | GET | `/usuarios/<id>/saldo` | Saldo do mês (vendas − gastos) | query `mes` OU `data_inicio`+`data_fim` |
 | GET | `/usuarios/<id>/comprovantes` | Lista comprovantes | query `modo`, `mes` OU `data_inicio`+`data_fim` |
 | POST | `/usuarios/<id>/comprovantes` | Cria comprovante (idempotente via `item_hash`) | body validado por `validate_comprovante_payload` |
-| GET | `/usuarios/<id>/comprovantes/ultimo` | Último comprovante lançado | — |
+| GET | `/usuarios/<id>/comprovantes/ultimo` | Último comprovante lançado (1 objeto). Com `?limit=N` (1..50) devolve `{items: [...], count}` com os N últimos | query `limit?` |
 | PATCH | `/usuarios/<id>/comprovantes/ultimo` | Corrige último comprovante | body `{valor_total?, item?, comprovante_id?}` |
 | DELETE | `/usuarios/<id>/comprovantes/ultimo` | Remove último comprovante (ou um específico) | body `{comprovante_id?}` |
+| PATCH | `/usuarios/<id>/comprovantes/<comprovante_id>` | Corrige um comprovante específico (404 se não é do usuário) | body `{valor_total?, item?}` |
+| DELETE | `/usuarios/<id>/comprovantes/<comprovante_id>` | Remove um comprovante específico (404 se não é do usuário) | — |
 | GET | `/usuarios/<id>/livro-caixa` | Livro caixa mensal (MEI) | query `mes` |
 
 ### `agendamentos` — `src/routes/agendamentos.py`
