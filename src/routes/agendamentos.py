@@ -51,10 +51,11 @@ def create_agendamento(usuario_id: int):
     
     with get_db_conn() as conn:
         agendamento = q.create(conn, usuario_id, body)
-        
+
         cache_invalidate_prefix("agendamentos", f"{usuario_id}:")
-        
-        return ok(201 ,agendamento)
+
+        status_code = 201 if agendamento.get("created", True) else 200
+        return ok(status_code, agendamento)
 
 
 @agendamentos_bp.route("/usuarios/<int:usuario_id>/agendamentos/recorrentes", methods=["POST"])
@@ -86,10 +87,12 @@ def create_recurrence(usuario_id: int):
             datas,
             validated_data["hora_compromisso"]
         )
-        
+
         cache_invalidate_prefix("agendamentos", f"{usuario_id}:")
-        
-        return ok(201, agendamentos)
+
+        created_any = any(item.get("created", True) for item in agendamentos)
+        status_code = 201 if (not agendamentos or created_any) else 200
+        return ok(status_code, agendamentos)
 
 
 @agendamentos_bp.route(

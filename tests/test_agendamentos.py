@@ -99,6 +99,7 @@ class TestCreateAgendamento:
             "data_compromisso": data_futura,
             "hora_compromisso": "23:59",
             "status": "confirmado",
+            "created": True,
         }
         _, conn = mock_db_conn("src.routes.agendamentos.get_db_conn")
 
@@ -109,7 +110,10 @@ class TestCreateAgendamento:
 
         assert resp.status_code == 201
         assert resp.get_json() == agendamento_fake
-        create_mock.assert_called_once_with(conn, usuario_id, payload)
+        create_mock.assert_called_once_with(conn, usuario_id, {
+            **payload,
+            "lembrete_minutos_antes": 15,
+        })
         invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
 
     def test_retorna_400_sem_campos_obrigatorios(self, client):
@@ -130,12 +134,44 @@ class TestCreateAgendamento:
         }
 
         mock_db_conn("src.routes.agendamentos.get_db_conn")
-        mocker.patch("src.routes.agendamentos.q.create", return_value={"id": 21, "status": "confirmado"})
+        mocker.patch(
+            "src.routes.agendamentos.q.create",
+            return_value={"id": 21, "status": "confirmado", "created": True},
+        )
         invalidate_prefix_mock = mocker.patch("src.routes.agendamentos.cache_invalidate_prefix")
 
         resp = client.post(f"/usuarios/{usuario_id}/agendamentos", json=payload)
 
         assert resp.status_code == 201
+        invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
+
+    def test_retorna_200_quando_ja_existe(self, client, mock_db_conn, mocker):
+        usuario_id = 1
+        data_futura = (date.today() + timedelta(days=2)).isoformat()
+        payload = {
+            "nome_compromisso": "Corrida com Julia",
+            "data_compromisso": data_futura,
+            "hora_compromisso": "20:00",
+        }
+        existente = {
+            "id": 99,
+            "nome_compromisso": payload["nome_compromisso"],
+            "data_compromisso": data_futura,
+            "hora_compromisso": "20:00:00",
+            "status": "confirmado",
+            "lembrete_minutos_antes": 15,
+            "created": False,
+        }
+
+        mock_db_conn("src.routes.agendamentos.get_db_conn")
+        mocker.patch("src.routes.agendamentos.q.create", return_value=existente)
+        invalidate_prefix_mock = mocker.patch("src.routes.agendamentos.cache_invalidate_prefix")
+
+        resp = client.post(f"/usuarios/{usuario_id}/agendamentos", json=payload)
+
+        assert resp.status_code == 200
+        assert resp.get_json() == existente
+        assert resp.get_json()["created"] is False
         invalidate_prefix_mock.assert_called_once_with("agendamentos", f"{usuario_id}:")
 
 

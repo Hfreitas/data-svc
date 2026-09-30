@@ -27,8 +27,31 @@ def list_agendamentos(conn, usuario_id: int) -> list[dict]:
     
 
 
+def _find_by_unique_key(cursor, params: dict) -> dict | None:
+    sql = """
+        SELECT
+            id,
+            nome_compromisso,
+            data_compromisso,
+            hora_compromisso,
+            status,
+            lembrete_minutos_antes
+        FROM public.agendamentos
+        WHERE usuario_id = %(usuario_id)s
+            AND nome_compromisso = %(nome_compromisso)s
+            AND data_compromisso = %(data_compromisso)s::date
+            AND hora_compromisso = %(hora_compromisso)s::time
+        ORDER BY id DESC
+        LIMIT 1;
+    """
+    cursor.execute(sql, params)
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
 def create(conn, usuario_id: int, data: dict) -> dict:
-    params ={
+    """Cria agendamento ou devolve o existente (idempotente na unique constraint)."""
+    params = {
         "usuario_id": usuario_id,
         "nome_compromisso": data.get("nome_compromisso"),
         "data_compromisso": data.get("data_compromisso"),
@@ -48,13 +71,27 @@ def create(conn, usuario_id: int, data: dict) -> dict:
             'confirmado',
             %(lembrete_minutos_antes)s,
             NOW(), NOW())
+        ON CONFLICT ON CONSTRAINT unique_agendamento_por_usuario
+        DO NOTHING
         RETURNING id, nome_compromisso, data_compromisso, hora_compromisso, status, lembrete_minutos_antes;
     """
-    
+
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
         cursor.execute(sql, params)
         row = cursor.fetchone()
-        return dict(row)
+        if row:
+            result = dict(row)
+            result["created"] = True
+            return result
+
+        existing = _find_by_unique_key(cursor, params)
+        if existing is None:
+            raise RuntimeError(
+                "agendamento unique conflict sem registro existente "
+                f"(usuario_id={usuario_id})"
+            )
+        existing["created"] = False
+        return existing
 
 
 def update_status(conn, agendamento_id: int, usuario_id: int, status: str) -> dict | None:
@@ -142,13 +179,12 @@ def cancel_recurrence(conn, usuario_id: int, recorrencia_id: str) -> list[dict]:
 
 
 def create_recurrence(conn, usuario_id: int, nome_compromisso: str, datas: list, hora_compromisso: str) -> list[dict]:
-    """Cria múltiplos agendamentos em série com o mesmo recorrencia_id em uma única transação."""
+    """Cria série recorrente; datas já existentes são reaproveitadas (idempotente)."""
     if not datas:
         return []
-    
+
     recorrencia_id = str(uuid.uuid4())
-    
-    # Construir INSERT com múltiplos VALUES
+
     placeholders = []
     params = {
         "usuario_id": usuario_id,
@@ -157,24 +193,52 @@ def create_recurrence(conn, usuario_id: int, nome_compromisso: str, datas: list,
         "recorrencia_id": recorrencia_id,
         "status": "confirmado",
     }
-    
-    # Adicionar cada data como parâmetro
+
     for i, data_compromisso in enumerate(datas):
         params[f"data_{i}"] = data_compromisso
-        placeholders.append(f"(%(usuario_id)s, %(nome_compromisso)s, %(data_{i})s::date, %(hora_compromisso)s::time, %(status)s, %(recorrencia_id)s, NOW(), NOW())")
-    
-    sql = f"""
+        placeholders.append(
+            f"(%(usuario_id)s, %(nome_compromisso)s, %(data_{i})s::date, "
+            f"%(hora_compromisso)s::time, %(status)s, %(recorrencia_id)s, NOW(), NOW())"
+        )
+
+    sql_insert = f"""
         INSERT INTO public.agendamentos (
             usuario_id, nome_compromisso, data_compromisso,
             hora_compromisso, status, recorrencia_id, data_criacao, data_modificacao)
         VALUES {', '.join(placeholders)}
-        RETURNING id, nome_compromisso, data_compromisso, TO_CHAR(hora_compromisso, 'HH24:MI') AS hora_compromisso, status, recorrencia_id;
+        ON CONFLICT ON CONSTRAINT unique_agendamento_por_usuario
+        DO NOTHING
+        RETURNING id;
     """
-    
+
+    data_placeholders = ", ".join(f"%(data_{i})s::date" for i in range(len(datas)))
+    sql_select = f"""
+        SELECT
+            id,
+            nome_compromisso,
+            data_compromisso,
+            TO_CHAR(hora_compromisso, 'HH24:MI') AS hora_compromisso,
+            status,
+            recorrencia_id
+        FROM public.agendamentos
+        WHERE usuario_id = %(usuario_id)s
+            AND nome_compromisso = %(nome_compromisso)s
+            AND hora_compromisso = %(hora_compromisso)s::time
+            AND data_compromisso IN ({data_placeholders})
+        ORDER BY data_compromisso, id;
+    """
+
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-        return [dict(row) for row in rows]
+        cursor.execute(sql_insert, params)
+        inserted_ids = {row["id"] for row in cursor.fetchall()}
+
+        cursor.execute(sql_select, params)
+        results = []
+        for row in cursor.fetchall():
+            item = dict(row)
+            item["created"] = item["id"] in inserted_ids
+            results.append(item)
+        return results
 
 
 def check_conflicts(conn, usuario_id: int, data_compromisso, hora_compromisso: str, nome_compromisso: str) -> dict:
