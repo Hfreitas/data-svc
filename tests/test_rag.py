@@ -312,6 +312,83 @@ class TestPerfilViaMetadataFilter:
         assert pg.call_args_list[2].args[-1] is None
 
 
+class TestSourcePrefixFilter:
+    """Agente Dúvidas precisa do corpus knowledge_duvidas_*, não da KB de produto.
+
+    Sem filtro, "qual o valor do meu das?" rankinga planos Contadora/cardápio
+    acima do Bloco 3.2 (incidente 190, 2026-09-14).
+    """
+
+    @staticmethod
+    def _preparar(mocker, backend="pgvector"):
+        mocker.patch.object(Config, "RAG_BACKEND", backend)
+        mocker.patch("src.routes.rag.redis_cache.cache_get", return_value=None)
+        mocker.patch("src.routes.rag.redis_cache.cache_set")
+        emb = mocker.MagicMock()
+        emb.data = [mocker.MagicMock(embedding=[0.1])]
+        fake = mocker.MagicMock()
+        fake.embeddings.create.return_value = emb
+        mocker.patch("src.routes.rag._get_client", return_value=fake)
+
+    def test_source_prefix_top_level_pgvector(self, client, mock_db_conn, mocker):
+        self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        pg = mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={
+            "pergunta": "qual o valor do meu das?",
+            "perfil": "mei",
+            "source_prefix": "knowledge_duvidas",
+            "match_threshold": 0.3,
+        })
+
+        assert pg.call_args.kwargs.get("source_prefix") == "knowledge_duvidas" or (
+            len(pg.call_args.args) >= 6 and pg.call_args.args[5] == "knowledge_duvidas"
+        )
+
+    def test_source_prefix_via_metadata_filter(self, client, mock_db_conn, mocker):
+        self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        pg = mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={
+            "pergunta": "DAS?",
+            "perfil": "mei",
+            "metadata_filter": {"source_prefix": "knowledge_duvidas"},
+        })
+
+        kw = pg.call_args.kwargs
+        assert kw.get("source_prefix") == "knowledge_duvidas" or (
+            len(pg.call_args.args) >= 6 and pg.call_args.args[5] == "knowledge_duvidas"
+        )
+
+    def test_source_prefix_muda_cache_key(self, client, mock_db_conn, mocker):
+        self._preparar(mocker)
+        mock_db_conn("src.routes.rag.get_db_conn")
+        get = mocker.patch("src.routes.rag.redis_cache.cache_get", return_value=None)
+        mocker.patch("src.routes.rag.redis_cache.cache_set")
+        mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={"pergunta": "DAS?", "perfil": "mei"})
+        client.post("/rag/busca", json={
+            "pergunta": "DAS?", "perfil": "mei", "source_prefix": "knowledge_duvidas"
+        })
+        assert get.call_args_list[0].args[0] != get.call_args_list[1].args[0]
+
+    def test_source_prefix_na_upstash(self, client, mock_db_conn, mocker):
+        self._preparar(mocker, backend="upstash")
+        mock_db_conn("src.routes.rag.get_db_conn")
+        up = mocker.patch("src.routes.rag.vector.busca_semantica", return_value=[])
+
+        client.post("/rag/busca", json={
+            "pergunta": "DAS?",
+            "perfil": "mei",
+            "source_prefix": "knowledge_duvidas",
+        })
+
+        assert up.call_args.kwargs.get("source_prefix") == "knowledge_duvidas"
+
+
 class TestNormalizacaoDaPergunta:
     """A pergunta é normalizada ANTES do embedding.
 
@@ -383,3 +460,190 @@ class TestNormalizacaoDaPergunta:
         resp = client.post("/rag/busca", json={"pergunta": "   "})
 
         assert resp.status_code == 200
+
+
+class _FakeNoul:
+    def __init__(self, noul: float):
+        self.noul = noul
+
+
+class _FakeResult:
+    def __init__(self, relevante: float, evidencia: float, injecao: float):
+        self.nouls = {
+            "relevante": _FakeNoul(relevante),
+            "evidencia": _FakeNoul(evidencia),
+            "injecao": _FakeNoul(injecao),
+        }
+
+
+class _FakeTypeSafeClient:
+    """client_factory dos testes — scores por id de chunk."""
+
+    def __init__(self, scores_by_id: dict):
+        self.scores_by_id = scores_by_id
+        self.calls = 0
+
+    def system_one(self, state, questions):
+        self.calls += 1
+        cid = state["passagem"]["id"]
+        r, e, i = self.scores_by_id[cid]
+        return _FakeResult(r, e, i)
+
+    def close(self):
+        pass
+
+
+class TestTypeSafeRagScore:
+    """Filtro Noul pós-embedding — flag off / keep-drop / fail-open."""
+
+    def test_flag_off_nao_chama_typesafe(self, client, mock_db_conn, mocker):
+        chunks = [
+            {"id": 1, "content": "DAS vence dia 20", "similarity": 0.9},
+            {"id": 2, "content": "Cardápio de bolos", "similarity": 0.8},
+        ]
+        mock_db_conn("src.routes.rag.get_db_conn")
+        mocker.patch("src.routes.rag.redis_cache.cache_get", return_value=None)
+        mocker.patch("src.routes.rag.redis_cache.cache_set")
+        emb_resp = mocker.MagicMock()
+        emb_resp.data = [mocker.MagicMock(embedding=[0.1])]
+        fake = mocker.MagicMock()
+        fake.embeddings.create.return_value = emb_resp
+        mocker.patch("src.routes.rag._get_client", return_value=fake)
+        mocker.patch("src.routes.rag.queries.busca_semantica", return_value=chunks)
+        filt = mocker.patch(
+            "src.routes.rag.rag_passages.filter_passages",
+            side_effect=lambda pergunta, resultados, perfil=None: resultados,
+        )
+
+        resp = client.post("/rag/busca", json={"pergunta": "Quando vence o DAS?"})
+
+        assert resp.status_code == 200
+        assert resp.get_json()["resultados"] == chunks
+        filt.assert_called_once()
+        # flag off no fixture — filter_passages real devolveria igual; aqui só
+        # garantimos que o hook existe no path.
+
+    def test_filter_keep_drop_e_ordena_por_evidencia(self, mocker):
+        from src.typesafe import rag_passages
+
+        mocker.patch.object(Config, "TYPESAFE_RAG_SCORE", True)
+        mocker.patch.object(Config, "TYPESAFE_API_KEY", "test-key")
+        mocker.patch.object(Config, "TYPESAFE_RAG_RELEVANT_MIN", 0.45)
+        mocker.patch.object(Config, "TYPESAFE_RAG_EVIDENCE_MIN", 0.55)
+        mocker.patch.object(Config, "TYPESAFE_RAG_INJECTION_MAX", 0.70)
+
+        chunks = [
+            {"id": "a", "content": "fraco", "similarity": 0.99},
+            {"id": "b", "content": "bom", "similarity": 0.70},
+            {"id": "c", "content": "injecao", "similarity": 0.95},
+        ]
+        # a: relevante ok mas evidencia baixa → drop
+        # b: keep, evidencia 0.9
+        # c: injecao alta → drop
+        scores = {
+            "a": (0.8, 0.30, 0.1),
+            "b": (0.9, 0.90, 0.1),
+            "c": (0.9, 0.90, 0.85),
+        }
+        client = _FakeTypeSafeClient(scores)
+
+        out = rag_passages.filter_passages(
+            "quando vence o das?",
+            chunks,
+            perfil="mei",
+            client_factory=lambda: client,
+        )
+
+        assert [c["id"] for c in out] == ["b"]
+        assert out[0]["typesafe_evidencia"] == 0.90
+        assert client.calls == 3
+
+    def test_filter_fail_open_em_erro_de_passagem(self, mocker):
+        from src.typesafe import rag_passages
+
+        mocker.patch.object(Config, "TYPESAFE_RAG_SCORE", True)
+        mocker.patch.object(Config, "TYPESAFE_API_KEY", "test-key")
+
+        chunks = [
+            {"id": 1, "content": "DAS", "similarity": 0.9},
+            {"id": 2, "content": "INSS", "similarity": 0.8},
+        ]
+
+        class BoomClient:
+            def system_one(self, state, questions):
+                raise RuntimeError("typesafe down")
+
+            def close(self):
+                pass
+
+        out = rag_passages.filter_passages(
+            "das?",
+            chunks,
+            client_factory=lambda: BoomClient(),
+        )
+        assert out == chunks  # fail-open: lista embedding intacta
+
+    def test_filter_flag_off_ou_sem_key_devolve_igual(self, mocker):
+        from src.typesafe import rag_passages
+
+        chunks = [{"id": 1, "content": "x", "similarity": 0.5}]
+        mocker.patch.object(Config, "TYPESAFE_RAG_SCORE", False)
+        mocker.patch.object(Config, "TYPESAFE_API_KEY", "test-key")
+        assert rag_passages.filter_passages("q", chunks) == chunks
+
+        mocker.patch.object(Config, "TYPESAFE_RAG_SCORE", True)
+        mocker.patch.object(Config, "TYPESAFE_API_KEY", "")
+        assert rag_passages.filter_passages("q", chunks) == chunks
+
+    def test_ts_flag_muda_cache_key(self, client, mock_db_conn, mocker):
+        mock_db_conn("src.routes.rag.get_db_conn")
+        get = mocker.patch("src.routes.rag.redis_cache.cache_get", return_value=None)
+        mocker.patch("src.routes.rag.redis_cache.cache_set")
+        emb_resp = mocker.MagicMock()
+        emb_resp.data = [mocker.MagicMock(embedding=[0.1])]
+        fake = mocker.MagicMock()
+        fake.embeddings.create.return_value = emb_resp
+        mocker.patch("src.routes.rag._get_client", return_value=fake)
+        mocker.patch("src.routes.rag.queries.busca_semantica", return_value=[])
+        mocker.patch(
+            "src.routes.rag.rag_passages.filter_passages",
+            side_effect=lambda pergunta, resultados, perfil=None: resultados,
+        )
+
+        mocker.patch.object(Config, "TYPESAFE_RAG_SCORE", False)
+        client.post("/rag/busca", json={"pergunta": "DAS?"})
+        k_off = get.call_args_list[-1].args[0]
+
+        mocker.patch.object(Config, "TYPESAFE_RAG_SCORE", True)
+        client.post("/rag/busca", json={"pergunta": "DAS?"})
+        k_on = get.call_args_list[-1].args[0]
+
+        assert k_off != k_on
+
+    def test_rota_com_filtro_aplica_resultado(self, client, mock_db_conn, mocker):
+        chunks = [
+            {"id": 1, "content": "DAS", "similarity": 0.9},
+            {"id": 2, "content": "bolo", "similarity": 0.85},
+        ]
+        kept = [{"id": 1, "content": "DAS", "similarity": 0.9, "typesafe_evidencia": 0.9}]
+        mock_db_conn("src.routes.rag.get_db_conn")
+        mocker.patch("src.routes.rag.redis_cache.cache_get", return_value=None)
+        set_mock = mocker.patch("src.routes.rag.redis_cache.cache_set")
+        emb_resp = mocker.MagicMock()
+        emb_resp.data = [mocker.MagicMock(embedding=[0.1])]
+        fake = mocker.MagicMock()
+        fake.embeddings.create.return_value = emb_resp
+        mocker.patch("src.routes.rag._get_client", return_value=fake)
+        mocker.patch("src.routes.rag.queries.busca_semantica", return_value=chunks)
+        mocker.patch.object(Config, "TYPESAFE_RAG_SCORE", True)
+        mocker.patch.object(Config, "TYPESAFE_API_KEY", "test-key")
+        mocker.patch(
+            "src.routes.rag.rag_passages.filter_passages",
+            return_value=kept,
+        )
+
+        resp = client.post("/rag/busca", json={"pergunta": "DAS?"})
+
+        assert resp.status_code == 200
+        assert resp.get_json()["resultados"] == kept
+        assert set_mock.call_args.args[1] == kept

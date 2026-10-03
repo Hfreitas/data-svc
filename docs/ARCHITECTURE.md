@@ -70,6 +70,10 @@ Resumo — para o passo a passo completo (virtualenv, `docker-compose.yml`, seed
 | `EMBEDDING_MODEL` | não | `text-embedding-3-small` | modelo de embedding |
 | `RAG_MATCH_THRESHOLD` | não | `0.4` | corte de similaridade cosseno em `/rag/busca` (0.7 zera resultado com este modelo — não usar) |
 | `RAG_MATCH_COUNT` | não | `5` | quantidade de chunks retornados |
+| `TYPESAFE_API_KEY` | para filtro RAG | — | key Jev; vazia = TypeSafe RAG score nunca roda |
+| `TYPESAFE_MODEL` | não | `jev-latest` | modelo System One |
+| `TYPESAFE_RAG_SCORE` | não | `0` | `1` liga Nouls por chunk após embedding (lab); fail-open se erro. **Não ligar em prod** até smoke |
+| `TYPESAFE_RAG_RELEVANT_MIN` / `_EVIDENCE_MIN` / `_INJECTION_MAX` | não | `0.45` / `0.55` / `0.70` | limiares do filtro (`src/typesafe/rag_passages.py`) |
 | `RAG_BACKEND` | não | `pgvector` | `pgvector` = tabela `documents` no Supabase; `upstash` = índice Upstash Vector. Qualquer outro valor cai em pgvector **silenciosamente**. Lido só no import — mudar exige restart |
 | `UPSTASH_VECTOR_REST_URL` / `_TOKEN` | se `RAG_BACKEND=upstash` | — | índice Upstash Vector (compartilhado STG+PRD, free tier = 1 índice só) |
 | `UPSTASH_REDIS_REST_URL` / `_TOKEN` | não | — | cache L2 distribuído; vazio = desativado (no-op, fail-open) |
@@ -114,11 +118,9 @@ Todas as rotas exigem o header `X-Api-Key` quando `API_KEY` está configurada (v
 | GET | `/usuarios/<id>/saldo` | Saldo do mês (vendas − gastos) | query `mes` OU `data_inicio`+`data_fim` |
 | GET | `/usuarios/<id>/comprovantes` | Lista comprovantes | query `modo`, `mes` OU `data_inicio`+`data_fim` |
 | POST | `/usuarios/<id>/comprovantes` | Cria comprovante (idempotente via `item_hash`) | body validado por `validate_comprovante_payload` |
-| GET | `/usuarios/<id>/comprovantes/ultimo` | Último comprovante lançado (1 objeto). Com `?limit=N` (1..50) devolve `{items: [...], count}` com os N últimos | query `limit?` |
+| GET | `/usuarios/<id>/comprovantes/ultimo` | Último comprovante lançado | — |
 | PATCH | `/usuarios/<id>/comprovantes/ultimo` | Corrige último comprovante | body `{valor_total?, item?, comprovante_id?}` |
 | DELETE | `/usuarios/<id>/comprovantes/ultimo` | Remove último comprovante (ou um específico) | body `{comprovante_id?}` |
-| PATCH | `/usuarios/<id>/comprovantes/<comprovante_id>` | Corrige um comprovante específico (404 se não é do usuário) | body `{valor_total?, item?}` |
-| DELETE | `/usuarios/<id>/comprovantes/<comprovante_id>` | Remove um comprovante específico (404 se não é do usuário) | — |
 | GET | `/usuarios/<id>/livro-caixa` | Livro caixa mensal (MEI) | query `mes` |
 
 ### `agendamentos` — `src/routes/agendamentos.py`
