@@ -30,23 +30,25 @@ def list_agendamentos(conn, usuario_id: int) -> list[dict]:
 def create(conn, usuario_id: int, data: dict) -> dict:
     params ={
         "usuario_id": usuario_id,
-        "nome_compromisso": data.get("nome_compromisso"),    
+        "nome_compromisso": data.get("nome_compromisso"),
         "data_compromisso": data.get("data_compromisso"),
-        "hora_compromisso": data.get("hora_compromisso")
+        "hora_compromisso": data.get("hora_compromisso"),
+        "lembrete_minutos_antes": data.get("lembrete_minutos_antes", 15),
     }
-    
+
     sql = """
         INSERT INTO public.agendamentos (
             usuario_id, nome_compromisso, data_compromisso,
-            hora_compromisso, status, data_criacao, data_modificacao)
+            hora_compromisso, status, lembrete_minutos_antes, data_criacao, data_modificacao)
         VALUES (
             %(usuario_id)s,
             %(nome_compromisso)s,
             %(data_compromisso)s::date,
             %(hora_compromisso)s::time,
             'confirmado',
+            %(lembrete_minutos_antes)s,
             NOW(), NOW())
-        RETURNING id, nome_compromisso, data_compromisso, hora_compromisso, status;
+        RETURNING id, nome_compromisso, data_compromisso, hora_compromisso, status, lembrete_minutos_antes;
     """
     
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -79,8 +81,9 @@ def update(conn, agendamento_id: int, usuario_id: int, data: dict) -> dict | Non
         "data_compromisso": data.get("data_compromisso"),
         "hora_compromisso": data.get("hora_compromisso"),
         "status": data.get("status"),
+        "lembrete_minutos_antes": data.get("lembrete_minutos_antes"),
     }
-    
+
     sql = """
         UPDATE public.agendamentos
         SET
@@ -88,10 +91,15 @@ def update(conn, agendamento_id: int, usuario_id: int, data: dict) -> dict | Non
             data_compromisso = COALESCE(%(data_compromisso)s::date, data_compromisso),
             hora_compromisso = COALESCE(%(hora_compromisso)s::time, hora_compromisso),
             status = COALESCE(%(status)s, status),
+            lembrete_minutos_antes = COALESCE(%(lembrete_minutos_antes)s, lembrete_minutos_antes),
+            lembrete_enviado = CASE WHEN %(hora_compromisso)s IS NOT NULL
+                                     OR %(data_compromisso)s IS NOT NULL
+                                     OR %(lembrete_minutos_antes)s IS NOT NULL
+                                THEN FALSE ELSE lembrete_enviado END,
             data_modificacao = NOW()
         WHERE id = %(agendamento_id)s
             AND usuario_id = %(usuario_id)s
-        RETURNING id, nome_compromisso, data_compromisso, TO_CHAR(hora_compromisso, 'HH24:MI') AS hora_compromisso, status;
+        RETURNING id, nome_compromisso, data_compromisso, TO_CHAR(hora_compromisso, 'HH24:MI') AS hora_compromisso, status, lembrete_minutos_antes;
     """
     
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:

@@ -11,6 +11,10 @@ Depois: N8N ──→ data-svc (Flask) ──→ Supabase
 
 **Stack:** Python 3.12 · Flask · psycopg2 · cachetools · Gunicorn · OpenAI SDK
 
+> Para o inventário completo de endpoints (método, path, propósito, body/params), a lista
+> integral de variáveis de ambiente e o funcionamento interno do cache em dois níveis e do RAG
+> dual-backend, ver [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
+
 ---
 
 ## Contribuição
@@ -143,7 +147,7 @@ FLASK_ENV=development
 TZ=America/Sao_Paulo
 ```
 
-> Para apontar para o Supabase de staging/produção, substitua `DATABASE_URL` pela connection string do painel do Supabase. **Nunca use produção para desenvolvimento.**
+> Para apontar para o Supabase de staging/produção, substitua `DATABASE_URL` pela connection string do painel do Supabase. Nunca use produção para desenvolvimento.
 
 ### 3. Crie o docker-compose.yml para o banco local
 
@@ -327,7 +331,7 @@ docker run --rm \
 
 ## Segurança — Acesso restrito ao N8N
 
-O `data-svc` **não deve ser acessível pela internet**. A proteção é feita em duas camadas:
+O `data-svc` não deve ser acessível pela internet. A proteção é feita em duas camadas:
 
 ### Camada 1 — Isolamento de rede (Easypanel)
 

@@ -7,12 +7,27 @@ from psycopg2.extras import RealDictCursor
 
 def ranking(
     conn,
-    bairro_id: int,
     categoria: str,
     solicitante_id: int,
+    bairro_id: int | None = None,
     limite: int = 3,
     servico_contexto: str | None = None,
 ) -> list:
+    """Profissionais da categoria, mais perto primeiro quando há geo.
+
+    `bairro_id` é opcional dos dois lados. Participação na Comunidade é automática
+    (o trigger projeta `usuarios` -> `comunidade_profissionais`) e ninguém informa
+    bairro no onboarding, então a maior parte da rede tem `bairro_id NULL`. Exigir
+    geo deixaria essa gente invisível — e mataria serviço digital/online, que o
+    prompt promete atender sem restrição geográfica.
+
+    Quem tem bairro e origem conhecida ganha `distancia_km` e vem primeiro; o resto
+    entra depois, em ordem aleatória, com `distancia_km = null`.
+
+    Quem já foi exibido antes ao mesmo solicitante entra por último, mas entra —
+    nunca some do resultado. Só vínculo real (`aguardando_profissional`/`conectado`)
+    esconde alguém.
+    """
     sql = """
         WITH origem AS (
           SELECT centro_lat, centro_lon FROM public.comunidade_bairros WHERE id = %(bairro_id)s
@@ -23,25 +38,52 @@ def ranking(
           p.servico_categoria,
           p.servico_descricao,
           b.nome                                          AS bairro,
-          round((6371 * acos(
-              least(1, greatest(-1,
-                cos(radians(o.centro_lat)) * cos(radians(b.centro_lat)) *
-                cos(radians(b.centro_lon) - radians(o.centro_lon)) +
-                sin(radians(o.centro_lat)) * sin(radians(b.centro_lat))
-              ))
-          ))::numeric, 1)                                 AS distancia_km
+          u.numero_telefone                               AS telefone,
+          COALESCE(u.razao_social, p.nome_exibicao, u.nome) AS negocio,
+          -- CASE explícito: greatest/least IGNORAM NULL em Postgres, então sem geo
+          -- `greatest(-1, NULL)` = -1 e acos(-1) = pi -> 20015.1 km (meia
+          -- circunferência) em vez de NULL, e o NULLS LAST vira no-op.
+          CASE WHEN o.centro_lat IS NULL OR b.centro_lat IS NULL THEN NULL
+               ELSE round((6371 * acos(
+                   least(1, greatest(-1,
+                     cos(radians(o.centro_lat)) * cos(radians(b.centro_lat)) *
+                     cos(radians(b.centro_lon) - radians(o.centro_lon)) +
+                     sin(radians(o.centro_lat)) * sin(radians(b.centro_lat))
+                   ))
+               ))::numeric, 1)
+          END                                             AS distancia_km
         FROM public.comunidade_profissionais p
-        JOIN public.comunidade_bairros b ON b.id = p.bairro_id
-        JOIN public.usuarios u           ON u.id = p.usuario_id
-        CROSS JOIN origem o
+        LEFT JOIN public.comunidade_bairros b ON b.id = p.bairro_id
+        JOIN public.usuarios u                ON u.id = p.usuario_id
+        LEFT JOIN origem o ON true
+        -- `pendente` significa "já te mostrei essa pessoa", não "vocês têm vínculo",
+        -- então ele pesa na ORDEM e não no filtro. Escondendo, uma rede pequena
+        -- zerava: com 3 psicólogos cadastrados, a segunda busca do mesmo dia
+        -- devolvia 0 linhas e o prompt aplicava ANTI-ALUCINAÇÃO -> "ainda não temos
+        -- psicólogos na Comunidade". Repetir um nome é melhor que negar a rede.
+        LEFT JOIN LATERAL (
+          SELECT max(c2.updated_at) AS visto_em
+          FROM public.comunidade_conexoes c2
+          WHERE c2.solicitante_usuario_id = %(solicitante_id)s
+            AND c2.profissional_id = p.id
+            AND c2.status = 'pendente'
+        ) vis ON true
         WHERE p.ativo AND p.aceita_ser_contatado
           AND p.servico_categoria = %(categoria)s
           AND p.usuario_id <> %(solicitante_id)s
           AND NOT EXISTS (
             SELECT 1 FROM public.comunidade_conexoes c
             WHERE c.solicitante_usuario_id = %(solicitante_id)s AND c.profissional_id = p.id
-              AND c.status IN ('pendente','aguardando_profissional','conectado'))
-        ORDER BY distancia_km ASC, random()
+              AND c.status IN ('aguardando_profissional','conectado'))
+        -- NULLS FIRST em visto_em é o oposto do NULLS LAST de distancia_km logo ao
+        -- lado, e os dois estão certos: distancia NULL = "não sei onde fica" (pior
+        -- candidato), visto_em NULL = "nunca mostrei" (melhor candidato). Depois dos
+        -- inéditos vêm os vistos há mais tempo.
+        --
+        -- NULLS LAST, e não `distancia_km IS NULL`: alias de saída só resolve no
+        -- ORDER BY quando aparece sozinho; dentro de expressão vira
+        -- "column distancia_km does not exist".
+        ORDER BY vis.visto_em ASC NULLS FIRST, distancia_km ASC NULLS LAST, random()
         LIMIT %(limite)s;
     """
     params = {
@@ -84,15 +126,33 @@ def _upsert_conexao_pendente(conn, solicitante_id: int, profissional_id: int, se
         return str(row["id"])
 
 
-def responder_solicitante(conn, conexao_id, resposta: bool) -> dict | None:
-    sql = """
-        UPDATE public.comunidade_conexoes
-        SET status = CASE WHEN %(resposta)s THEN 'aguardando_profissional' ELSE 'recusado_solicitante' END,
-            solicitante_resposta = %(resposta)s, solicitante_respondeu_em = now(), updated_at = now()
-        WHERE id = %(conexao_id)s AND status = 'pendente'
-        RETURNING id, status;
+def buscar_bairro(conn, nome: str | None = None, texto: str | None = None) -> dict | None:
+    """Resolve um bairro da Comunidade.
+
+    `nome`  — nome dito explicitamente (match exato, senão LIKE).
+    `texto` — mensagem livre do usuário; casa qualquer bairro citado dentro dela e
+              devolve a ÚLTIMA menção (maior `position`), que é a mais recente na frase.
+              Substitui a lista de bairros hardcoded que vivia no n8n.
     """
-    params = {"conexao_id": conexao_id, "resposta": resposta}
+    if nome:
+        sql = """
+            SELECT id, nome, cidade, uf, centro_lat, centro_lon
+            FROM public.comunidade_bairros
+            WHERE ativo AND (lower(nome) = lower(%(nome)s)
+                             OR lower(nome) LIKE '%%' || lower(%(nome)s) || '%%')
+            ORDER BY (lower(nome) = lower(%(nome)s)) DESC
+            LIMIT 1;
+        """
+        params = {"nome": nome}
+    else:
+        sql = """
+            SELECT id, nome, cidade, uf, centro_lat, centro_lon
+            FROM public.comunidade_bairros
+            WHERE ativo AND position(lower(nome) in lower(%(texto)s)) > 0
+            ORDER BY position(lower(nome) in lower(%(texto)s)) DESC
+            LIMIT 1;
+        """
+        params = {"texto": texto}
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, params)
@@ -100,16 +160,164 @@ def responder_solicitante(conn, conexao_id, resposta: bool) -> dict | None:
         return dict(row) if row else None
 
 
-def responder_profissional(conn, conexao_id, resposta: bool) -> dict | None:
+def conexoes_do_usuario(conn, solicitante_id: int, limite: int = 30) -> list:
+    """Histórico de conexões do solicitante, com os dois lados já montados em JSON."""
+    sql = """
+        SELECT
+          c.id, c.status, c.profissional_resposta, c.servico_contexto,
+          c.created_at AS data_conexao, c.conectado_em,
+          jsonb_build_object(
+            'nome', COALESCE(ps.nome_exibicao, us.nome),
+            'telefone', us.numero_telefone,
+            'negocio', COALESCE(us.razao_social, ps.nome_exibicao, us.nome)
+          ) AS profissional_1,
+          jsonb_build_object(
+            'nome', COALESCE(pp.nome_exibicao, up.nome),
+            'telefone', up.numero_telefone,
+            'negocio', COALESCE(up.razao_social, pp.nome_exibicao, up.nome),
+            'profissional_id', pp.id
+          ) AS profissional_2
+        FROM public.comunidade_conexoes c
+        JOIN public.comunidade_profissionais pp ON pp.id = c.profissional_id
+        JOIN public.usuarios up                 ON up.id = pp.usuario_id
+        JOIN public.usuarios us                 ON us.id = c.solicitante_usuario_id
+        LEFT JOIN public.comunidade_profissionais ps ON ps.usuario_id = c.solicitante_usuario_id
+        WHERE c.solicitante_usuario_id = %(solicitante_id)s
+        ORDER BY c.updated_at DESC
+        LIMIT %(limite)s;
+    """
+    params = {"solicitante_id": solicitante_id, "limite": limite}
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+def conexao_pendente_por_telefone(conn, telefone: str) -> dict | None:
+    """Conexão aguardando o SIM do indicado, buscada pelo telefone DELE.
+
+    Comparação com os dois lados normalizados (só dígitos) — o telefone chega do
+    WhatsApp sem máscara e o cadastro pode ter máscara.
+    """
+    sql = """
+        SELECT
+          c.id, c.status, c.solicitante_usuario_id, c.profissional_id, c.servico_contexto,
+          regexp_replace(us.numero_telefone, '\\D', '', 'g') AS solicitante_telefone,
+          us.nome                                            AS solicitante_nome,
+          COALESCE(us.razao_social, us.nome)                 AS solicitante_negocio,
+          regexp_replace(up.numero_telefone, '\\D', '', 'g') AS indicado_telefone,
+          COALESCE(pp.nome_exibicao, up.nome)                AS indicado_nome,
+          COALESCE(up.razao_social, pp.nome_exibicao, up.nome) AS indicado_negocio,
+          pp.usuario_id                                      AS indicado_usuario_id
+        FROM public.comunidade_conexoes c
+        JOIN public.comunidade_profissionais pp ON pp.id = c.profissional_id
+        JOIN public.usuarios up                 ON up.id = pp.usuario_id
+        JOIN public.usuarios us                 ON us.id = c.solicitante_usuario_id
+        WHERE c.status = 'aguardando_profissional'
+          AND COALESCE(c.profissional_resposta, false) = false
+          AND regexp_replace(up.numero_telefone, '\\D', '', 'g')
+              = regexp_replace(%(telefone)s, '\\D', '', 'g')
+        ORDER BY c.updated_at DESC
+        LIMIT 1;
+    """
+    params = {"telefone": telefone}
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def cancelar_conexoes(conn, solicitante_id: int, conexao_id: str | None = None) -> list:
+    """Cancela conexões em aberto do solicitante.
+
+    Mantém a semântica que já roda em produção no nó `Postgres CANCEL`: cancela a
+    conexão apontada E as demais ainda em aberto. O ranking cria uma linha
+    `pendente` por profissional exibido (até 10), então um cancelamento que
+    limpasse só uma deixaria as outras 9 travando o índice `uq_conexao_ativa` e o
+    filtro NOT EXISTS de buscas futuras.
+    """
     sql = """
         UPDATE public.comunidade_conexoes
-        SET status = CASE WHEN %(resposta)s THEN 'conectado' ELSE 'recusado_profissional' END,
-            profissional_resposta = %(resposta)s, profissional_respondeu_em = now(),
-            conectado_em = CASE WHEN %(resposta)s THEN now() ELSE NULL END, updated_at = now()
-        WHERE id = %(conexao_id)s AND status = 'aguardando_profissional'
-        RETURNING id, status;
+        SET status = 'recusado_solicitante',
+            solicitante_resposta = false, solicitante_respondeu_em = now(), updated_at = now()
+        WHERE solicitante_usuario_id = %(solicitante_id)s
+          AND (id::text = %(conexao_id)s
+               OR status IN ('pendente','aguardando_profissional'))
+        RETURNING id::text, status;
+    """
+    params = {"solicitante_id": solicitante_id, "conexao_id": conexao_id}
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+def responder_solicitante(conn, conexao_id, resposta: bool) -> dict | None:
+    """Etapa 1: o solicitante escolhe (ou recusa) um dos profissionais exibidos.
+
+    Escolher um encerra a rodada: as linhas `pendente` irmãs — criadas pelo
+    `ranking()` para os OUTROS profissionais da mesma lista, só para carregar um
+    `conexao_id` — viram `expirado`. Sem isso elas ficam órfãs para sempre,
+    ocupando o índice `uq_conexao_ativa` e, pior, casando o `NOT EXISTS` do
+    ranking: quem foi exibido uma vez e nunca contatado sumia da rede daquele
+    solicitante em definitivo.
+    """
+    sql = """
+        UPDATE public.comunidade_conexoes
+        SET status = CASE WHEN %(resposta)s THEN 'aguardando_profissional' ELSE 'recusado_solicitante' END,
+            solicitante_resposta = %(resposta)s, solicitante_respondeu_em = now(), updated_at = now()
+        WHERE id = %(conexao_id)s AND status = 'pendente'
+        RETURNING id::text, status, solicitante_usuario_id;
     """
     params = {"conexao_id": conexao_id, "resposta": resposta}
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        if row is None:
+            return None
+
+        # Mesma transação da promoção: ou as duas mudanças valem, ou nenhuma.
+        cur.execute(
+            """
+            UPDATE public.comunidade_conexoes
+            SET status = 'expirado', updated_at = now()
+            WHERE solicitante_usuario_id = %(solicitante_id)s
+              AND id <> %(conexao_id)s
+              AND status = 'pendente';
+            """,
+            {"solicitante_id": row["solicitante_usuario_id"], "conexao_id": conexao_id},
+        )
+        row["irmas_expiradas"] = cur.rowcount
+
+    return dict(row)
+
+
+def responder_profissional(conn, conexao_id, resposta: bool, conectar: bool = True) -> dict | None:
+    """Resposta do profissional indicado.
+
+    `conectar=False` registra o SIM sem fechar a conexão: o fluxo de consentimento
+    duplo tem DOIS momentos — o indicado autoriza (aqui) e o contato só é entregue
+    ao solicitante depois (aí sim `conectar=True` → 'conectado'). Fechar já no
+    aceite quebraria a detecção de `evento_conexao='indicado_aceitou'`, que procura
+    exatamente status='aguardando_profissional' AND profissional_resposta=true.
+    Um NÃO recusa em qualquer caso.
+    """
+    sql = """
+        UPDATE public.comunidade_conexoes
+        SET status = CASE
+                       WHEN NOT %(resposta)s THEN 'recusado_profissional'
+                       WHEN %(conectar)s     THEN 'conectado'
+                       ELSE status
+                     END,
+            profissional_resposta = %(resposta)s, profissional_respondeu_em = now(),
+            conectado_em = CASE WHEN %(resposta)s AND %(conectar)s THEN now() ELSE NULL END,
+            updated_at = now()
+        WHERE id = %(conexao_id)s AND status = 'aguardando_profissional'
+        RETURNING id::text, status, profissional_resposta, solicitante_usuario_id;
+    """
+    params = {"conexao_id": conexao_id, "resposta": resposta, "conectar": conectar}
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, params)

@@ -9,7 +9,7 @@ def find_by_telefone(conn, telefone: str) -> dict | None:
     sql = """
         SELECT
             id, numero_telefone, nome, razao_social, email,
-            estado_atual, interacao_previa,
+            estado_atual, estado_atualizado_em, interacao_previa,
             tipo_negocio, descricao_negocio, descricao_objetivo,
             area_ajuda, preco_referencia,
             dias_trabalho, horario_inicio, horario_fim,
@@ -17,7 +17,9 @@ def find_by_telefone(conn, telefone: str) -> dict | None:
             versao_agente, cpf_cnpj,
             cluster, onboarding_step, confirmacao_lembretes, onboarding_concluido,
             das_categoria, das_valor,
-            perfil_tipo, eh_mei
+            perfil_tipo, eh_mei, profissao, modalidade,
+            conselho_sigla, conselho_uf, conselho_numero,
+            uf, municipio, followup_agendado, followup_timestamp
         FROM public.usuarios
         WHERE numero_telefone = %(telefone)s
         LIMIT 1;
@@ -95,11 +97,21 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
             das_valor               = COALESCE(%(das_valor)s, das_valor),
             perfil_tipo             = COALESCE(%(perfil_tipo)s, perfil_tipo),
             eh_mei                  = COALESCE(%(eh_mei)s, eh_mei),
+            profissao               = COALESCE(%(profissao)s, profissao),
+            modalidade              = COALESCE(%(modalidade)s, modalidade),
+            conselho_sigla          = COALESCE(%(conselho_sigla)s, conselho_sigla),
+            conselho_uf             = COALESCE(%(conselho_uf)s, conselho_uf),
+            conselho_numero         = COALESCE(%(conselho_numero)s, conselho_numero),
+            uf                      = COALESCE(%(uf)s, uf),
+            municipio               = COALESCE(%(municipio)s, municipio),
+            followup_agendado       = COALESCE(%(followup_agendado)s, followup_agendado),
+            followup_timestamp      = COALESCE(%(followup_timestamp)s, followup_timestamp),
+            estado_atualizado_em    = CASE WHEN %(estado_atual)s IS NOT NULL THEN NOW() ELSE estado_atualizado_em END,
             data_ultimo_contato     = NOW()
         WHERE id = %(id)s
         RETURNING *;
     """
-    
+
     params = {
         "id": usuario_id,
         "nome": None,
@@ -127,6 +139,15 @@ def update(conn, usuario_id: int, fields: dict) -> dict | None:
         "das_valor": None,
         "perfil_tipo": None,
         "eh_mei": None,
+        "profissao": None,
+        "modalidade": None,
+        "conselho_sigla": None,
+        "conselho_uf": None,
+        "conselho_numero": None,
+        "uf": None,
+        "municipio": None,
+        "followup_agendado": None,
+        "followup_timestamp": None,
     }
     params.update(fields)
 
@@ -160,7 +181,20 @@ def reset_demo(conn, usuario_id: int) -> dict | None:
             dias_trabalho         = NULL,
             horario_inicio        = NULL,
             horario_fim           = NULL,
-            contas_fixas_completo = false
+            contas_fixas_completo = false,
+            das_categoria         = NULL,
+            das_valor             = NULL,
+            perfil_tipo           = NULL,
+            eh_mei                = NULL,
+            profissao             = NULL,
+            modalidade            = NULL,
+            conselho_sigla        = NULL,
+            conselho_uf           = NULL,
+            conselho_numero       = NULL,
+            uf                    = NULL,
+            municipio             = NULL,
+            followup_agendado     = false,
+            followup_timestamp    = NULL
         WHERE id = %(usuario_id)s
         RETURNING *;
     """
@@ -168,6 +202,7 @@ def reset_demo(conn, usuario_id: int) -> dict | None:
     sql_deletes = [
         "DELETE FROM public.feedbacks WHERE usuario_id = %(usuario_id)s;",
         "DELETE FROM public.chat_memory WHERE usuario_id = %(usuario_id)s;",
+        "DELETE FROM public.preferencias_notificacao WHERE usuario_id = %(usuario_id)s;",
     ]
 
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -180,6 +215,47 @@ def reset_demo(conn, usuario_id: int) -> dict | None:
             cursor.execute(sql, {"usuario_id": usuario_id})
 
         return dict(row)
+
+
+# Tipos válidos de preferência de notificação (espelha o CHECK da tabela).
+NOTIF_TIPOS = (
+    "das", "declaracao", "inss", "carneleao", "ir", "irpf",
+    "tff_iss", "segunda", "relatorio", "lembrete_relatorio",
+)
+
+
+def get_notificacoes(conn, usuario_id: int) -> list:
+    """Retorna as preferências de notificação do usuário (1 linha por tipo)."""
+    sql = """
+        SELECT tipo, ativo
+        FROM public.preferencias_notificacao
+        WHERE usuario_id = %(usuario_id)s
+        ORDER BY tipo;
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"usuario_id": usuario_id})
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def upsert_notificacoes(conn, usuario_id: int, prefs: dict) -> list:
+    """Upsert idempotente de preferências: {tipo: ativo(bool)}.
+
+    Insere ou atualiza uma linha por (usuario_id, tipo); só toca os tipos
+    informados. Retorna o conjunto completo atual do usuário.
+    """
+    sql = """
+        INSERT INTO public.preferencias_notificacao (usuario_id, tipo, ativo)
+        VALUES (%(usuario_id)s, %(tipo)s, %(ativo)s)
+        ON CONFLICT (usuario_id, tipo)
+        DO UPDATE SET ativo = EXCLUDED.ativo, updated_at = NOW();
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        for tipo, ativo in prefs.items():
+            cursor.execute(
+                sql,
+                {"usuario_id": usuario_id, "tipo": tipo, "ativo": bool(ativo)},
+            )
+    return get_notificacoes(conn, usuario_id)
 
 
 def get_prox_nfe(conn, usuario_id: int) -> dict:
@@ -237,3 +313,39 @@ def save_cliente_nf(conn, usuario_id: int, nome: str, cnpj: str, email: str) -> 
 
     return {"id": enterprise_id, "nome": nome, "cnpj": cnpj, "email": email}
 
+
+
+def find_telefones_by_ids(conn, usuario_ids: list) -> dict:
+    """Resolve {id: numero_telefone} para os ids informados, numa query só.
+
+    Existe para a invalidação de cache: a chave do L2 é `user:<telefone>`, mas
+    escrita externa (SQL manual, job) identifica o usuário por id. Ids ausentes
+    simplesmente não aparecem no dict — o caller reporta como não-encontrados.
+    """
+    if not usuario_ids:
+        return {}
+
+    sql = """
+        SELECT id, numero_telefone
+        FROM public.usuarios
+        WHERE id = ANY(%(ids)s);
+    """
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"ids": list(usuario_ids)})
+        return {row["id"]: row["numero_telefone"] for row in cursor.fetchall()}
+
+
+def get_cobranca_pendente(conn, usuario_id: int) -> dict | None:
+    """Retorna a última cobrança pendente do usuário, ou None se não houver."""
+    sql = """
+        SELECT id, abacatepay_id, pix_code, value AS valor, status, date_created AS created_at
+        FROM public.cobrancas
+        WHERE user_id = %(usuario_id)s AND status = 'AWAITING_PAYMENT'
+        ORDER BY id DESC LIMIT 1;
+    """
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(sql, {"usuario_id": usuario_id})
+        row = cursor.fetchone()
+        return dict(row) if row else None

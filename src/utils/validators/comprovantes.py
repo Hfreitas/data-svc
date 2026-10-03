@@ -30,6 +30,16 @@ def validate_mes(mes: str) -> str:
     return mes
 
 
+def validate_intervalo(data_inicio: str, data_fim: str) -> tuple[str, str]:
+    """Valida o intervalo ?data_inicio=YYYY-MM-DD&data_fim=YYYY-MM-DD (inclusivo)."""
+    for nome, val in (("data_inicio", data_inicio), ("data_fim", data_fim)):
+        if not val or not re.match(r"^\d{4}-\d{2}-\d{2}$", val):
+            abort(400, description=f"parâmetro '{nome}' deve estar no formato YYYY-MM-DD")
+    if data_inicio > data_fim:
+        abort(400, description="'data_inicio' não pode ser maior que 'data_fim'")
+    return data_inicio, data_fim
+
+
 def validate_modo(modo: str) -> str:
     """Valida o modo de um comprovante em relatorio | gastos | vendas."""
     raw = (modo or "").strip().lower()
@@ -87,6 +97,19 @@ def validate_comprovante_payload(body: dict) -> dict:
     if operacao == "gasto" and not data_compra:
         abort(400, description="o campo 'data_compra' é obrigatório para operacao='gasto'")
 
+    # PL fields (optional — MEI doesn't use them)
+    def _normalize_optional_field(value):
+        if value is None or value == "":
+            return None
+        normalized = str(value).strip()
+        return normalized if normalized else None
+
+    pagador_nome = _normalize_optional_field(body.get("pagador_nome"))
+    pagador_cpf = _normalize_optional_field(body.get("pagador_cpf"))
+    atendido_nome = _normalize_optional_field(body.get("atendido_nome"))
+    atendido_cpf = _normalize_optional_field(body.get("atendido_cpf"))
+    natureza_pagamento = _normalize_optional_field(body.get("natureza_pagamento"))
+
     body["operacao"] = operacao
     body["item"] = item
     body["item_hash"] = item_hash
@@ -99,4 +122,9 @@ def validate_comprovante_payload(body: dict) -> dict:
         text = str(raw).strip()
         body[key] = text or None
 
+    body["pagador_nome"] = pagador_nome
+    body["pagador_cpf"] = pagador_cpf
+    body["atendido_nome"] = atendido_nome
+    body["atendido_cpf"] = atendido_cpf
+    body["natureza_pagamento"] = natureza_pagamento
     return body

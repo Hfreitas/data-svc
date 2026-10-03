@@ -9,6 +9,7 @@ from werkzeug.exceptions import HTTPException
 from src.utils.recurrence_generator import generate_recurrence_dates
 from src.utils.validators.agendamentos import validate_update_agendamento_payload
 from src.utils.validators.contas import validate_conta_recorrente_payload
+from src.utils.validators.usuarios import validate_telefone
 
 
 # ---------------------------------------------------------------------------
@@ -161,3 +162,87 @@ class TestValidateContaRecorrenteValor:
         assert result["tipo"] == "aluguel"
         assert result["valor"] == 50.0
         assert result["dia_vencimento"] == 15
+
+
+# ---------------------------------------------------------------------------
+# validate_telefone — números puros + LID (WhatsApp)
+# ---------------------------------------------------------------------------
+
+class TestValidateTelefone:
+    def test_numero_valido_10_digitos(self):
+        """Aceita número de 10 dígitos (mínimo)."""
+        result = validate_telefone("1234567890")
+        assert result == "1234567890"
+
+    def test_numero_valido_13_digitos(self):
+        """Aceita número de 13 dígitos (padrão Brasil WhatsApp)."""
+        result = validate_telefone("5511999999999")
+        assert result == "5511999999999"
+
+    def test_numero_valido_14_digitos(self):
+        """Aceita número de 14 dígitos (antes rejeitava)."""
+        result = validate_telefone("55119999999999")
+        assert result == "55119999999999"
+
+    def test_numero_valido_15_digitos(self):
+        """Aceita número de 15 dígitos (antes rejeitava)."""
+        result = validate_telefone("551199999999999")
+        assert result == "551199999999999"
+
+    def test_lid_valido_com_sufixo_lid(self):
+        """Aceita identificador LID do WhatsApp (formato: <digitos>@lid)."""
+        result = validate_telefone("143185670090934@lid")
+        assert result == "143185670090934@lid"
+
+    def test_lid_curto_valido(self):
+        """Aceita LID com até um dígito (mínimo)."""
+        result = validate_telefone("1@lid")
+        assert result == "1@lid"
+
+    def test_numero_vazio_retorna_400(self):
+        """Rejeita string vazia."""
+        with pytest.raises(HTTPException) as exc_info:
+            validate_telefone("")
+        assert exc_info.value.code == 400
+
+    def test_numero_none_retorna_400(self):
+        """Rejeita None (falsy)."""
+        with pytest.raises(HTTPException) as exc_info:
+            validate_telefone(None)
+        assert exc_info.value.code == 400
+
+    def test_numero_muito_curto_retorna_400(self):
+        """Rejeita número com menos de 10 dígitos."""
+        with pytest.raises(HTTPException) as exc_info:
+            validate_telefone("123456789")  # 9 dígitos
+        assert exc_info.value.code == 400
+
+    def test_numero_muito_longo_retorna_400(self):
+        """Rejeita número com mais de 15 dígitos (sem @lid)."""
+        with pytest.raises(HTTPException) as exc_info:
+            validate_telefone("5511999999999999")  # 16 dígitos
+        assert exc_info.value.code == 400
+
+    def test_nao_numerico_retorna_400(self):
+        """Rejeita string com caracteres não-numéricos (sem @lid)."""
+        with pytest.raises(HTTPException) as exc_info:
+            validate_telefone("abc1234567890")
+        assert exc_info.value.code == 400
+
+    def test_lid_sem_at_sign_retorna_400(self):
+        """Rejeita formato parecido com LID mas sem @."""
+        with pytest.raises(HTTPException) as exc_info:
+            validate_telefone("143185670090934lid")
+        assert exc_info.value.code == 400
+
+    def test_lid_com_letras_apos_at_retorna_400(self):
+        """Rejeita formato tipo LID mas com letras erradas após @."""
+        with pytest.raises(HTTPException) as exc_info:
+            validate_telefone("143185670090934@xyz")
+        assert exc_info.value.code == 400
+
+    def test_numero_com_espacos_retorna_400(self):
+        """Rejeita número com espaços."""
+        with pytest.raises(HTTPException) as exc_info:
+            validate_telefone("5511 9999 9999")
+        assert exc_info.value.code == 400

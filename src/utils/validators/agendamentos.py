@@ -24,6 +24,24 @@ _STATUS_AGENDAMENTO: Final[set[str]] = {
     "cancelado",
 }
 
+_LEMBRETE_MINUTOS_ANTES_DEFAULT: Final[int] = 15
+
+
+def validate_lembrete_minutos_antes(valor) -> int:
+    """Valida a antecedencia (minutos) do lembrete automatico de compromisso."""
+    if valor is None:
+        return _LEMBRETE_MINUTOS_ANTES_DEFAULT
+
+    try:
+        minutos = int(valor)
+    except (TypeError, ValueError):
+        abort(400, description="o campo 'lembrete_minutos_antes' deve ser um inteiro")
+
+    if minutos < 1 or minutos > 1440:
+        abort(400, description="o campo 'lembrete_minutos_antes' deve estar entre 1 e 1440")
+
+    return minutos
+
 
 def validate_scope_agendamento(scope: str) -> str:
     """Valida se o escopo informado em agendamentos e correto."""
@@ -70,6 +88,7 @@ def validate_agendamento_payload(body: dict) -> dict:
     body["nome_compromisso"] = nome_compromisso
     body["data_compromisso"] = data_compromisso.isoformat()
     body["hora_compromisso"] = hora_compromisso.strftime("%H:%M")
+    body["lembrete_minutos_antes"] = validate_lembrete_minutos_antes(body.get("lembrete_minutos_antes"))
 
     return body
 
@@ -93,7 +112,7 @@ def validate_update_agendamento_payload(body: dict) -> dict:
     if not body:
         abort(400, description="body não pode estar vazio")
 
-    campos_validos = {"nome_compromisso", "data_compromisso", "hora_compromisso", "status"}
+    campos_validos = {"nome_compromisso", "data_compromisso", "hora_compromisso", "status", "lembrete_minutos_antes"}
     campos_fornecidos = set(body.keys())
 
     if not campos_fornecidos.intersection(campos_validos):
@@ -140,6 +159,9 @@ def validate_update_agendamento_payload(body: dict) -> dict:
         status = str(body.get("status", "")).strip().lower()
         validate_status_agendamento(status)
         resultado["status"] = status
+
+    if "lembrete_minutos_antes" in body:
+        resultado["lembrete_minutos_antes"] = validate_lembrete_minutos_antes(body.get("lembrete_minutos_antes"))
 
     return resultado
 

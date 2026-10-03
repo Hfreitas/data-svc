@@ -8,6 +8,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 
 ENV PYTHONPATH=/app
+# Sem isto o stdout do Python é block-buffered fora de TTY: os print() ficam
+# presos num buffer de ~8KB e só aparecem quando ele enche — ou somem no
+# SIGTERM do deploy. Foi o que aconteceu em 2026-08-17: o log do container em
+# PRD não tinha NENHUMA linha [rag] apesar do endpoint estar respondendo 200,
+# o que parecia "código não deployado" e era só buffer.
+ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 

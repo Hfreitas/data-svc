@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 
 from src.db import get_db_conn
 from src.cache import cache_get, cache_set, cache_invalidate
+from src import redis_cache
 from src.config import Config
 from src.utils.validators import validate_telefone, require_fields, validate_usuario_agenda_fields
 import src.queries.usuarios as q
@@ -14,18 +15,25 @@ usuarios_bp = Blueprint("usuarios", __name__)
 def get_usuario():
     telefone = validate_telefone(request.args.get('telefone')) 
       
+    # L1 in-process (por-worker)
     cached = cache_get("usuario", telefone)
-    
     if cached:
         return jsonify(cached)
-    
+
+    # L2 distribuído (Redis) — sobrevive a restart/multi-worker; miss cai no DB
+    l2 = redis_cache.cache_get(f"user:{telefone}")
+    if l2:
+        cache_set("usuario", telefone, l2, Config.CACHE_TTL_USUARIO)
+        return jsonify(l2)
+
     with get_db_conn() as conn:
         usuario = q.find_by_telefone(conn, telefone)
-        
+
         if not usuario:
             return fail("usuario_nao_encontrado", status_code=404)
-        
+
         cache_set("usuario", telefone, usuario, Config.CACHE_TTL_USUARIO)
+        redis_cache.cache_set(f"user:{telefone}", usuario, Config.REDIS_TTL_USER)
         return ok(200, usuario)
 
 
@@ -41,9 +49,10 @@ def create_usuario():
 
     with get_db_conn() as conn:
         usuario = q.upsert(conn, numero_telefone, body.get("nome"), body.get("razao_social"))
-        
+
         cache_invalidate("usuario", numero_telefone)
-        
+        redis_cache.cache_del(f"user:{numero_telefone}")
+
         return ok(200, usuario)
 
 
@@ -53,17 +62,20 @@ def update_usuario(usuario_id: int):
     if not isinstance(body, dict):
         return fail("body_invalido", "JSON inválido ou ausente", 400)
 
-    allowed_fields = {
-        "nome", "razao_social", "estado_atual", "interacao_previa",
-        "tipo_negocio", "descricao_negocio", "descricao_objetivo",
-        "area_ajuda", "preco_referencia", "dias_trabalho",
-        "horario_inicio", "horario_fim",
-        "versao_agente", "onboarding_step",
-        "contas_fixas_completo", "onboarding_concluido", "onboarding_timestamp", "cluster",
-        "confirmacao_lembretes", "cpf_cnpj",
-        "das_categoria", "das_valor",
-        "perfil_tipo", "eh_mei",
-    }
+   allowed_fields = {
+    "nome", "razao_social", "estado_atual", "interacao_previa",
+    "tipo_negocio", "descricao_negocio", "descricao_objetivo",
+    "area_ajuda", "preco_referencia", "dias_trabalho",
+    "horario_inicio", "horario_fim",
+    "versao_agente", "onboarding_step",
+    "contas_fixas_completo", "onboarding_concluido", "onboarding_timestamp", "cluster",
+    "confirmacao_lembretes", "cpf_cnpj",
+    "das_categoria", "das_valor",
+    "perfil_tipo", "eh_mei", "profissao", "modalidade",
+    "conselho_sigla", "conselho_uf", "conselho_numero",
+    "uf", "municipio", "followup_agendado", "followup_timestamp",
+    "data_ultimo_contato",
+}
 
     # Validar campos de agenda primeiro para coerção de tipos
     validated = validate_usuario_agenda_fields(body)
@@ -89,6 +101,7 @@ def update_usuario(usuario_id: int):
 
         cache_invalidate("usuario", usuario["numero_telefone"])
         cache_invalidate("usuario", f"id:{usuario_id}")
+        redis_cache.cache_del(f"user:{usuario['numero_telefone']}")
 
         return ok(200, usuario)
 
@@ -102,8 +115,43 @@ def resetar_demo(usuario_id: int):
 
         cache_invalidate("usuario", usuario["numero_telefone"])
         cache_invalidate("usuario", f"id:{usuario_id}")
+        redis_cache.cache_del(f"user:{usuario['numero_telefone']}")
 
         return ok(200, usuario)
+
+
+@usuarios_bp.route("/usuarios/<int:usuario_id>/notificacoes", methods=["GET"])
+def get_notificacoes(usuario_id: int):
+    with get_db_conn() as conn:
+        prefs = q.get_notificacoes(conn, usuario_id)
+    return ok(200, prefs)
+
+
+@usuarios_bp.route("/usuarios/<int:usuario_id>/notificacoes", methods=["PUT"])
+def update_notificacoes(usuario_id: int):
+    """Upsert de preferências de notificação.
+
+    Body: objeto plano {tipo: bool}, ex: {"das": true, "inss": false}.
+    Só tipos válidos (NOTIF_TIPOS) são aceitos; qualquer chave desconhecida
+    rejeita a requisição inteira.
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not body:
+        return fail("body_invalido", "informe {tipo: bool}", 400)
+
+    invalidos = [k for k in body if k not in q.NOTIF_TIPOS]
+    if invalidos:
+        return fail(
+            "tipo_invalido",
+            f"tipos não permitidos: {', '.join(invalidos)}",
+            400,
+        )
+
+    prefs = {k: bool(v) for k, v in body.items()}
+
+    with get_db_conn() as conn:
+        atual = q.upsert_notificacoes(conn, usuario_id, prefs)
+    return ok(200, atual)
 
 
 @usuarios_bp.route("/usuarios/<int:usuario_id>/prox-nfe", methods=["GET"])
@@ -135,4 +183,13 @@ def create_cliente_nf(usuario_id: int):
             body.get("email", ""),
         )
     return ok(200, cliente)
+
+
+@usuarios_bp.route("/usuarios/<int:usuario_id>/cobranca-pendente", methods=["GET"])
+def get_cobranca_pendente(usuario_id: int):
+    with get_db_conn() as conn:
+        cobranca = q.get_cobranca_pendente(conn, usuario_id)
+
+    # Retorna {} quando não existe (não 404)
+    return ok(200, cobranca if cobranca else {})
 
