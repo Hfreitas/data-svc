@@ -68,6 +68,11 @@ def list_comprovantes(conn, usuario_id: int, mes: str = None, modo: str = "relat
             valor_unitario,
             valor_total,
             canal_venda,
+            pagador_nome,
+            pagador_cpf,
+            atendido_nome,
+            atendido_cpf,
+            natureza_pagamento,
             {data_expr} AS data_lancamento
         FROM public.comprovantes
         WHERE usuario_id = %(usuario_id)s
@@ -122,11 +127,11 @@ def upsert(conn, usuario_id: int, data: dict) -> dict:
             valor_total   = EXCLUDED.valor_total,
             last_update   = EXCLUDED.last_update,
             canal_venda   = EXCLUDED.canal_venda,
-            pagador_nome  = EXCLUDED.pagador_nome,
-            pagador_cpf   = EXCLUDED.pagador_cpf,
-            atendido_nome = EXCLUDED.atendido_nome,
-            atendido_cpf  = EXCLUDED.atendido_cpf,
-            natureza_pagamento = EXCLUDED.natureza_pagamento
+            pagador_nome  = COALESCE(EXCLUDED.pagador_nome, public.comprovantes.pagador_nome),
+            pagador_cpf   = COALESCE(EXCLUDED.pagador_cpf, public.comprovantes.pagador_cpf),
+            atendido_nome = COALESCE(EXCLUDED.atendido_nome, public.comprovantes.atendido_nome),
+            atendido_cpf  = COALESCE(EXCLUDED.atendido_cpf, public.comprovantes.atendido_cpf),
+            natureza_pagamento = COALESCE(EXCLUDED.natureza_pagamento, public.comprovantes.natureza_pagamento)
         RETURNING id, operacao, item, valor_total, data_compra, data_venda, canal_venda,
                   pagador_nome, pagador_cpf, atendido_nome, atendido_cpf, natureza_pagamento;
     """
@@ -136,13 +141,23 @@ def upsert(conn, usuario_id: int, data: dict) -> dict:
         return dict(row)
 
 
-def update_ultimo(conn, usuario_id: int, valor_total=None, item=None, comprovante_id=None) -> dict | None:
+def update_ultimo(conn, usuario_id: int, valor_total=None, item=None, comprovante_id=None, operacao=None) -> dict | None:
     """Atualiza o comprovante indicado por comprovante_id; sem id, cai no último (por last_update DESC)."""
+    if operacao is not None:
+        op = str(operacao).strip().lower()
+        if op in ("rendimento", "venda"):
+            operacao = "venda"
+        elif op in ("pagamento", "gasto"):
+            operacao = "gasto"
+        else:
+            operacao = None
+
     params = {
         "usuario_id": usuario_id,
         "valor_total": valor_total,
         "item": item,
         "comprovante_id": comprovante_id,
+        "operacao": operacao,
     }
 
     sql = """
@@ -154,6 +169,7 @@ def update_ultimo(conn, usuario_id: int, valor_total=None, item=None, comprovant
                 ELSE valor_unitario
             END,
             item = COALESCE(%(item)s, item),
+            operacao = COALESCE(%(operacao)s, operacao),
             last_update = NOW()
         WHERE id = COALESCE(
             %(comprovante_id)s,
@@ -185,32 +201,42 @@ def delete_ultimo(conn, usuario_id: int, comprovante_id=None) -> dict | None:
         return dict(row) if row else None
 
 
-_SQL_ULTIMOS = """
-    SELECT id, operacao, item, quantidade, valor_unitario, valor_total,
-           to_char(COALESCE(data_venda, data_compra),'DD/MM/YY') AS data_fmt,
-           pagador_nome, atendido_nome, natureza_pagamento
-    FROM public.comprovantes
-    WHERE usuario_id=%(usuario_id)s
-    ORDER BY last_update DESC LIMIT %(limit)s;
-"""
-
-
 def get_ultimo(conn, usuario_id: int) -> dict | None:
     """Retorna o último comprovante de um usuário (por last_update DESC)."""
-    params = {"usuario_id": usuario_id, "limit": 1}
+    params = {"usuario_id": usuario_id}
 
+    sql = """
+        SELECT id, operacao, item, quantidade, valor_unitario, valor_total,
+               to_char(COALESCE(data_venda, data_compra),'DD/MM/YY') AS data_fmt,
+               pagador_nome, pagador_cpf, atendido_nome, natureza_pagamento
+        FROM public.comprovantes
+        WHERE usuario_id=%(usuario_id)s
+        ORDER BY last_update DESC LIMIT 1;
+    """
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-        cursor.execute(_SQL_ULTIMOS, params)
+        cursor.execute(sql, params)
         row = cursor.fetchone()
         return dict(row) if row else None
 
 
-def get_ultimos(conn, usuario_id: int, limit: int) -> list[dict]:
-    """Retorna os N últimos comprovantes do usuário (mesma ordenação e campos de get_ultimo)."""
+def list_recentes(conn, usuario_id: int, limit: int = 10) -> list[dict]:
+    """Últimos N comprovantes do usuário (qualquer mês), mais recentes primeiro."""
+    limit = max(1, min(int(limit or 10), 50))
     params = {"usuario_id": usuario_id, "limit": limit}
 
+    sql = """
+        SELECT id, operacao, item, quantidade, valor_unitario, valor_total,
+               data_venda, data_compra,
+               COALESCE(data_venda, data_compra) AS data_lancamento,
+               to_char(COALESCE(data_venda, data_compra),'DD/MM/YY') AS data_fmt,
+               pagador_nome, pagador_cpf, atendido_nome, natureza_pagamento
+        FROM public.comprovantes
+        WHERE usuario_id=%(usuario_id)s
+        ORDER BY last_update DESC
+        LIMIT %(limit)s;
+    """
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-        cursor.execute(_SQL_ULTIMOS, params)
+        cursor.execute(sql, params)
         return [dict(row) for row in cursor.fetchall()]
 
 
@@ -237,6 +263,7 @@ def get_livro_caixa(conn, usuario_id: int, mes: str) -> dict:
         cursor.execute(sql, params)
         row = cursor.fetchone()
         return dict(row)
+
 
 def get_livro_caixa_detalhado(conn, usuario_id: int, mes: str) -> dict | None:
     """Perfil + totais + linhas de pagamentos/rendimentos para o PDF do Livro Caixa."""

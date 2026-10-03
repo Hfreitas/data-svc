@@ -70,6 +70,7 @@ def update_usuario(usuario_id: int):
         "versao_agente", "onboarding_step",
         "contas_fixas_completo", "onboarding_concluido", "onboarding_timestamp", "cluster",
         "confirmacao_lembretes", "cpf_cnpj",
+        "das_categoria", "das_valor",
         "perfil_tipo", "eh_mei", "profissao", "modalidade",
         "conselho_sigla", "conselho_uf", "conselho_numero",
         "uf", "municipio", "followup_agendado", "followup_timestamp",

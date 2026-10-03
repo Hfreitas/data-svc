@@ -109,6 +109,7 @@ def validate_comprovante_payload(body: dict) -> dict:
     atendido_nome = _normalize_optional_field(body.get("atendido_nome"))
     atendido_cpf = _normalize_optional_field(body.get("atendido_cpf"))
     natureza_pagamento = _normalize_optional_field(body.get("natureza_pagamento"))
+    canal_venda = _normalize_optional_field(body.get("canal_venda"))
 
     body["operacao"] = operacao
     body["item"] = item
@@ -118,4 +119,5 @@ def validate_comprovante_payload(body: dict) -> dict:
     body["atendido_nome"] = atendido_nome
     body["atendido_cpf"] = atendido_cpf
     body["natureza_pagamento"] = natureza_pagamento
+    body["canal_venda"] = canal_venda
     return body
