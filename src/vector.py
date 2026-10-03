@@ -59,7 +59,11 @@ def para_escala_cosseno(score: float) -> float:
 
 
 def busca_semantica(
-    embedding: list[float], threshold: float, count: int, perfil: str | None = None
+    embedding: list[float],
+    threshold: float,
+    count: int,
+    perfil: str | None = None,
+    source_prefix: str | None = None,
 ) -> list:
     """Mesmo contrato de `queries.rag.busca_semantica`, servido pela Upstash.
 
@@ -68,6 +72,9 @@ def busca_semantica(
     contenha tudo (`comum` é expandido nos três perfis na escrita, justamente
     para nenhuma query precisar dele). Buscar no namespace default devolveria
     zero vetores — 200 vazio silencioso. Levantar deixa a decisão com a rota.
+
+    `source_prefix` (ex. ``knowledge_duvidas``): produto e dúvidas compartilham
+    namespace; filtramos pós-query via ``metadata.source``.
     """
     if not habilitado():
         raise VectorIndisponivel("UPSTASH_VECTOR_REST_URL/_TOKEN não configurados")
@@ -76,12 +83,19 @@ def busca_semantica(
     if not namespace:
         raise VectorIndisponivel(f"perfil sem namespace correspondente: {perfil!r}")
 
+    safe_prefix = None
+    if source_prefix:
+        safe_prefix = "".join(c for c in str(source_prefix) if c.isalnum() or c in "_-.")
+        if not safe_prefix:
+            safe_prefix = None
+
     corpo = json.dumps(
         {
             "vector": embedding,
             "topK": count * FATOR_OVERFETCH,
-            "includeData": True,      # o texto do chunk vive em `data`
-            "includeMetadata": False,  # a rota não devolve metadata; poupa banda
+            "includeData": True,  # o texto do chunk vive em `data`
+            # metadata só quando precisamos filtrar source_prefix pós-query
+            "includeMetadata": bool(safe_prefix),
         }
     ).encode("utf-8")
 
@@ -96,12 +110,18 @@ def busca_semantica(
     except Exception as e:  # HTTPError, URLError, timeout, JSON inválido
         raise VectorIndisponivel(f"{type(e).__name__}: {e}") from e
 
-    resultados = [
-        {
-            "id": r["id"],
-            "content": r.get("data") or "",
-            "similarity": para_escala_cosseno(float(r["score"])),
-        }
-        for r in payload.get("result") or []
-    ]
+    resultados = []
+    for r in payload.get("result") or []:
+        if safe_prefix:
+            meta = r.get("metadata") or {}
+            src = str(meta.get("source") or "")
+            if not src.startswith(safe_prefix):
+                continue
+        resultados.append(
+            {
+                "id": r["id"],
+                "content": r.get("data") or "",
+                "similarity": para_escala_cosseno(float(r["score"])),
+            }
+        )
     return [r for r in resultados if r["similarity"] > threshold][:count]

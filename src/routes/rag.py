@@ -7,6 +7,7 @@ from src import redis_cache, vector
 from src.config import Config
 from src.utils.api_response import ok, fail
 from src.utils.texto import normalizar_busca
+from src.typesafe import rag_passages
 import src.queries.rag as queries
 
 rag_bp = Blueprint("rag", __name__)
@@ -37,6 +38,22 @@ def _perfil_do_filtro(body: dict) -> str | None:
     return _PERFIL_MAP.get(str(valor or "").lower().strip())
 
 
+def _source_prefix_do_body(body: dict) -> str | None:
+    """Prefixo de `metadata.source` (ex. ``knowledge_duvidas``).
+
+    Aceita top-level `source_prefix` ou `metadata_filter.source_prefix`.
+    Só alfanumérico / `_` / `-` / `.` — o restante é descartado (sem filtro).
+    """
+    mf = body.get("metadata_filter") if isinstance(body.get("metadata_filter"), dict) else {}
+    raw = body.get("source_prefix")
+    if raw is None and isinstance(mf, dict):
+        raw = mf.get("source_prefix")
+    if raw is None:
+        return None
+    safe = "".join(c for c in str(raw) if c.isalnum() or c in "_-.")
+    return safe or None
+
+
 def _get_client() -> OpenAI:
     global _openai_client
     if _openai_client is None:
@@ -60,14 +77,18 @@ def busca_rag():
     match_threshold = float(body.get("match_threshold", Config.RAG_MATCH_THRESHOLD))
     # perfil opcional: filtra chunks por metadata.perfil (mei|autonomo|pl); inválido/ausente = sem filtro
     perfil = _PERFIL_MAP.get(str(body.get("perfil") or "").lower().strip()) or _perfil_do_filtro(body)
+    source_prefix = _source_prefix_do_body(body)
 
-    # Cache por hash da query normalizada + params (inclui perfil: filtro muda o
+    # Cache por hash da query normalizada + params (inclui perfil/source: filtro muda o
     # resultado; e o backend: o L2 dura REDIS_TTL_RAG=3600s e não sabe quem gerou
     # a linha, então sem isso virar RAG_BACKEND serviria o resultado do backend
     # anterior por uma hora — o A/B em produção estaria medindo o cache).
+    # ts1/ts0: TypeSafe RAG score muda o conjunto — não misturar com cache sem filtro.
     backend = Config.RAG_BACKEND
+    ts_flag = "ts1" if Config.TYPESAFE_RAG_SCORE else "ts0"
     cache_key = "rag:" + hashlib.sha256(
-        f"{pergunta.strip().lower()}|{match_count}|{match_threshold}|{perfil or ''}|{backend}".encode("utf-8")
+        f"{pergunta.strip().lower()}|{match_count}|{match_threshold}|{perfil or ''}|"
+        f"{source_prefix or ''}|{backend}|{ts_flag}".encode("utf-8")
     ).hexdigest()
     cached = redis_cache.cache_get(cache_key)
     if cached is not None:
@@ -84,13 +105,22 @@ def busca_rag():
     resultados = None
     if backend == "upstash":
         try:
-            resultados = vector.busca_semantica(embedding, match_threshold, match_count, perfil)
+            resultados = vector.busca_semantica(
+                embedding,
+                match_threshold,
+                match_count,
+                perfil,
+                source_prefix=source_prefix,
+            )
             # Log do caminho de SUCESSO, não só da falha. Sem ele o cutover é
             # inverificável: stdout limpo depois de virar a flag é ambíguo entre
             # "índice servindo" e "RAG_BACKEND nem foi lido". `resultados=0` é o
             # caso que mais precisa aparecer — 200 vazio legítimo e backend nunca
             # acionado produzem a mesma resposta HTTP.
-            print(f"[rag] upstash ok: perfil={perfil} resultados={len(resultados)}")
+            print(
+                f"[rag] upstash ok: perfil={perfil} source_prefix={source_prefix} "
+                f"resultados={len(resultados)}"
+            )
         except vector.VectorIndisponivel as e:
             # degrada para o pgvector em vez de 500 ou lista vazia. O log é
             # obrigatório: fallback mudo faz a Upstash parecer saudável enquanto
@@ -100,8 +130,16 @@ def busca_rag():
     if resultados is None:
         with get_db_conn() as conn:
             resultados = queries.busca_semantica(
-                conn, embedding, match_threshold, match_count, perfil
+                conn,
+                embedding,
+                match_threshold,
+                match_count,
+                perfil,
+                source_prefix=source_prefix,
             )
+
+    # TypeSafe: julga cada chunk (Nouls). Flag off / sem key / erro → fail-open.
+    resultados = rag_passages.filter_passages(pergunta, resultados, perfil)
 
     redis_cache.cache_set(cache_key, resultados, Config.REDIS_TTL_RAG)
     return ok(200, {"resultados": resultados})

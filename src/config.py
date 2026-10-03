@@ -54,6 +54,21 @@ class Config:
     UPSTASH_VECTOR_REST_URL: str = (os.getenv("UPSTASH_VECTOR_REST_URL") or "").strip()
     UPSTASH_VECTOR_REST_TOKEN: str = (os.getenv("UPSTASH_VECTOR_REST_TOKEN") or "").strip()
 
+    # TypeSafe/Jev — filtro semântico de chunks RAG (lab). Default off; fail-open
+    # se key ausente ou API falhar. Jev julga relevância; não gera resposta fiscal.
+    TYPESAFE_API_KEY: str = (os.getenv("TYPESAFE_API_KEY") or "").strip()
+    TYPESAFE_MODEL: str = (os.getenv("TYPESAFE_MODEL") or "jev-latest").strip()
+    TYPESAFE_RAG_SCORE: bool = (os.getenv("TYPESAFE_RAG_SCORE") or "0").strip() in (
+        "1",
+        "true",
+        "True",
+        "yes",
+        "on",
+    )
+    TYPESAFE_RAG_RELEVANT_MIN: float = float(os.getenv("TYPESAFE_RAG_RELEVANT_MIN", "0.45"))
+    TYPESAFE_RAG_EVIDENCE_MIN: float = float(os.getenv("TYPESAFE_RAG_EVIDENCE_MIN", "0.55"))
+    TYPESAFE_RAG_INJECTION_MAX: float = float(os.getenv("TYPESAFE_RAG_INJECTION_MAX", "0.70"))
+
     @classmethod
     def validate(cls) -> None:
         if cls.FLASK_ENV == "production" and cls.API_KEY is None:
