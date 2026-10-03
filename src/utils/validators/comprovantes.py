@@ -109,22 +109,15 @@ def validate_comprovante_payload(body: dict) -> dict:
     atendido_nome = _normalize_optional_field(body.get("atendido_nome"))
     atendido_cpf = _normalize_optional_field(body.get("atendido_cpf"))
     natureza_pagamento = _normalize_optional_field(body.get("natureza_pagamento"))
+    canal_venda = _normalize_optional_field(body.get("canal_venda"))
 
     body["operacao"] = operacao
     body["item"] = item
     body["item_hash"] = item_hash
-
-    # Campos opcionais PL (rendimento): quem pagou / CPF / quem foi atendido
-    for key in ("pagador_nome", "pagador_cpf", "atendido_nome", "canal_venda"):
-        raw = body.get(key)
-        if raw is None:
-            continue
-        text = str(raw).strip()
-        body[key] = text or None
-
     body["pagador_nome"] = pagador_nome
     body["pagador_cpf"] = pagador_cpf
     body["atendido_nome"] = atendido_nome
     body["atendido_cpf"] = atendido_cpf
     body["natureza_pagamento"] = natureza_pagamento
+    body["canal_venda"] = canal_venda
     return body

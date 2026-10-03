@@ -62,20 +62,20 @@ def update_usuario(usuario_id: int):
     if not isinstance(body, dict):
         return fail("body_invalido", "JSON inválido ou ausente", 400)
 
-   allowed_fields = {
-    "nome", "razao_social", "estado_atual", "interacao_previa",
-    "tipo_negocio", "descricao_negocio", "descricao_objetivo",
-    "area_ajuda", "preco_referencia", "dias_trabalho",
-    "horario_inicio", "horario_fim",
-    "versao_agente", "onboarding_step",
-    "contas_fixas_completo", "onboarding_concluido", "onboarding_timestamp", "cluster",
-    "confirmacao_lembretes", "cpf_cnpj",
-    "das_categoria", "das_valor",
-    "perfil_tipo", "eh_mei", "profissao", "modalidade",
-    "conselho_sigla", "conselho_uf", "conselho_numero",
-    "uf", "municipio", "followup_agendado", "followup_timestamp",
-    "data_ultimo_contato",
-}
+    allowed_fields = {
+        "nome", "razao_social", "estado_atual", "interacao_previa",
+        "tipo_negocio", "descricao_negocio", "descricao_objetivo",
+        "area_ajuda", "preco_referencia", "dias_trabalho",
+        "horario_inicio", "horario_fim",
+        "versao_agente", "onboarding_step",
+        "contas_fixas_completo", "onboarding_concluido", "onboarding_timestamp", "cluster",
+        "confirmacao_lembretes", "cpf_cnpj",
+        "das_categoria", "das_valor",
+        "perfil_tipo", "eh_mei", "profissao", "modalidade",
+        "conselho_sigla", "conselho_uf", "conselho_numero",
+        "uf", "municipio", "followup_agendado", "followup_timestamp",
+        "data_ultimo_contato",
+    }
 
     # Validar campos de agenda primeiro para coerção de tipos
     validated = validate_usuario_agenda_fields(body)
