@@ -121,7 +121,8 @@ Todas as rotas exigem o header `X-Api-Key` quando `API_KEY` está configurada (v
 | GET | `/usuarios/<id>/comprovantes/ultimo` | Último comprovante lançado | — |
 | PATCH | `/usuarios/<id>/comprovantes/ultimo` | Corrige último comprovante | body `{valor_total?, item?, comprovante_id?}` |
 | DELETE | `/usuarios/<id>/comprovantes/ultimo` | Remove último comprovante (ou um específico) | body `{comprovante_id?}` |
-| GET | `/usuarios/<id>/livro-caixa` | Livro caixa mensal (MEI) | query `mes` |
+| GET | `/usuarios/<id>/livro-caixa` | Livro caixa mensal (totais) | query `mes` |
+| GET | `/usuarios/<id>/livro-caixa/pdf` | PDF Livro Caixa PL (base64 p/ Z-API) | query `mes`, `parcial` |
 
 ### `agendamentos` — `src/routes/agendamentos.py`
 
